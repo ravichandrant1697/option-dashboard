@@ -1,0 +1,19 @@
+{
+  "name": "option-dashboard",
+  "version": "5.0.0",
+  "private": true,
+  "description": "NIFTY/stock options analysis, paper trading, and backtesting engine",
+  "scripts": {
+    "start": "node option_dashboard.js",
+    "tick": "node option_dashboard.js tick",
+    "backtest": "node option_dashboard.js backtest",
+    "tune": "node option_dashboard.js tune"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "xlsx": "^0.18.5"
+  },
+  "optionalDependencies": {
+    "ws": "^8.18.0"
+  }
+}
