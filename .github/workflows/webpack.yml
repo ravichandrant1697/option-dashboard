@@ -1,0 +1,99 @@
+# TRUE 1-MINUTE CADENCE on GitHub Actions.
+#
+# GitHub cron cannot fire more often than every 5 minutes, so instead of
+# one tick per workflow run, each run hosts the engine's OWN 60-second
+# loop (mode: session) for half the trading day. Two sessions cover the
+# full day because a single job maxes out at 6h and the market day is
+# 6h15m. State (xlsx + json) is committed back to the repo every 10
+# minutes during the session and once at the end.
+#
+# Required repo secret:  UPSTOX_TOKEN  (rotate every morning — Upstox
+#                        tokens expire daily)
+# Optional repo secrets: TG_BOT_TOKEN, TG_CHAT_ID
+#
+# COST WARNING: two ~3.5h GitHub-hosted jobs per day ≈ 8,000+ runner
+# minutes/month — well beyond the 2,000 free private-repo minutes. Either
+# budget for it, use a self-hosted runner, or fall back to `tick` mode on
+# a 5-minute cron (cheap, coarser).
+
+name: Option Dashboard (1-min sessions)
+
+on:
+  schedule:
+    # Morning session:   starts 03:40 UTC (09:10 IST), ends 12:35 IST
+    - cron: "40 3 * * 1-5"
+    # Afternoon session: starts 07:00 UTC (12:30 IST), ends 15:35 IST
+    # (queued by the concurrency group until the morning session exits)
+    - cron: "0 7 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+# Sessions must never overlap — they would race on the state files
+concurrency:
+  group: trading
+  cancel-in-progress: false
+
+jobs:
+  session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci || npm install
+
+      - name: Run trading session (60s internal loop)
+        env:
+          UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          INSTRUMENT_KEY: "NSE_INDEX|Nifty 50"
+          EXPIRY_DATE: "2026-08-27"
+          STRIKE_DIFF: "100"
+          AUTO_EXIT: "1"
+        run: |
+          # Morning run hands over at 12:35 IST; afternoon runs to 15:35
+          if [ "$(date -u +%H)" -lt 6 ]; then
+            export SESSION_END="12:35"
+          else
+            export SESSION_END="15:35"
+          fi
+          echo "Session until $SESSION_END IST"
+
+          git config user.name "trading-bot"
+          git config user.email "trading-bot@users.noreply.github.com"
+
+          node option-dashboard.js session &
+          ENGINE=$!
+
+          # Commit state every 10 minutes while the engine is running, so
+          # a runner failure loses at most 10 minutes of history
+          while kill -0 $ENGINE 2>/dev/null; do
+            sleep 600
+            git add option-dashboard.xlsx positions.json tuning.json 2>/dev/null || true
+            if ! git diff --cached --quiet; then
+              git commit -m "state: periodic $(date -u +'%Y-%m-%dT%H:%MZ')" || true
+              git pull --rebase origin ${GITHUB_REF_NAME} || true
+              git push || true
+            fi
+          done
+          wait $ENGINE || true
+
+      - name: Final state commit
+        if: always()
+        run: |
+          git config user.name "trading-bot"
+          git config user.email "trading-bot@users.noreply.github.com"
+          git add option-dashboard.xlsx positions.json tuning.json 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "state: session end $(date -u +'%Y-%m-%dT%H:%MZ')"
+            git pull --rebase origin ${GITHUB_REF_NAME} || true
+            git push
+          fi
