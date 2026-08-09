@@ -36,9 +36,6 @@ jobs:
           UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          INSTRUMENT_KEY: "NSE_INDEX|Nifty 50"
-          EXPIRY_DATE: "2026-08-27"
-          STRIKE_DIFF: "100"
           AUTO_EXIT: "1"
 
         run: |
