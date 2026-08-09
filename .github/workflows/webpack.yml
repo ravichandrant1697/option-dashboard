@@ -1,3 +1,4 @@
+```yaml
 - name: Run trading session
   env:
     UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
@@ -7,19 +8,28 @@
     EXPIRY_DATE: "2026-08-27"
     STRIKE_DIFF: "100"
     AUTO_EXIT: "1"
+
   run: |
-    echo "PWD:"
+    echo "=== CURRENT DIRECTORY ==="
     pwd
 
-    echo "Repository files:"
+    echo "=== REPOSITORY FILES ==="
     find . -maxdepth 2 -type f | sort
 
+    echo "=== CHECKING MAIN FILE ==="
     if [ ! -f "./option_dashboard.js" ]; then
       echo "ERROR: option_dashboard.js not found in repository root"
       exit 1
     fi
 
-    if [ "$(date -u +%H)" -lt 6 ]; then
+    echo "option_dashboard.js FOUND"
+
+    # GitHub Actions uses UTC.
+    # Morning: 09:10-12:35 IST
+    # Afternoon: 12:30-15:35 IST
+    CURRENT_UTC_HOUR=$(date -u +%H)
+
+    if [ "$CURRENT_UTC_HOUR" -lt 6 ]; then
       export SESSION_END="12:35"
     else
       export SESSION_END="15:35"
@@ -30,19 +40,62 @@
     git config user.name "trading-bot"
     git config user.email "trading-bot@users.noreply.github.com"
 
+    echo "=== STARTING TRADING ENGINE ==="
+
     node ./option_dashboard.js session &
     ENGINE=$!
 
-    while kill -0 $ENGINE 2>/dev/null; do
-      sleep 600
+    echo "Engine PID: $ENGINE"
 
-      git add option_dashboard.xlsx positions.json tuning.json 2>/dev/null || true
+    while kill -0 "$ENGINE" 2>/dev/null; do
+      CURRENT_IST=$(TZ=Asia/Kolkata date +%H:%M)
 
-      if ! git diff --cached --quiet; then
-        git commit -m "state: periodic $(date -u +'%Y-%m-%dT%H:%MZ')" || true
-        git pull --rebase origin "${GITHUB_REF_NAME}" || true
-        git push || true
+      if [[ "$CURRENT_IST" > "$SESSION_END" || "$CURRENT_IST" == "$SESSION_END" ]]; then
+        echo "Session end reached: $CURRENT_IST IST"
+
+        echo "Stopping trading engine..."
+        kill "$ENGINE" 2>/dev/null || true
+
+        break
+      fi
+
+      sleep 60
+
+      # Commit state every 10 minutes
+      if [ $(( $(date +%s) / 60 % 10 )) -eq 0 ]; then
+        echo "=== PERIODIC STATE COMMIT ==="
+
+        git add option_dashboard.xlsx positions.json tuning.json 2>/dev/null || true
+
+        if ! git diff --cached --quiet; then
+          git commit -m "state: periodic $(date -u +'%Y-%m-%dT%H:%MZ')" || true
+          git pull --rebase origin "${GITHUB_REF_NAME}" || true
+          git push || true
+        else
+          echo "No state changes to commit"
+        fi
       fi
     done
 
-    wait $ENGINE || true
+    wait "$ENGINE" 2>/dev/null || true
+
+    echo "=== TRADING SESSION FINISHED ==="
+
+- name: Final state commit
+  if: always()
+  run: |
+    echo "=== FINAL STATE COMMIT ==="
+
+    git config user.name "trading-bot"
+    git config user.email "trading-bot@users.noreply.github.com"
+
+    git add option_dashboard.xlsx positions.json tuning.json 2>/dev/null || true
+
+    if ! git diff --cached --quiet; then
+      git commit -m "state: session end $(date -u +'%Y-%m-%dT%H:%MZ')" || true
+      git pull --rebase origin "${GITHUB_REF_NAME}" || true
+      git push || true
+    else
+      echo "No final state changes to commit"
+    fi
+```
