@@ -39,6 +39,16 @@ jobs:
           AUTO_EXIT: "1"
 
         run: |
+          echo "=== CHECKING UPSTOX TOKEN ==="
+
+          if [ -z "$UPSTOX_TOKEN" ]; then
+            echo "UPSTOX_TOKEN is EMPTY"
+            exit 1
+          fi
+
+          echo "UPSTOX_TOKEN is present"
+          echo "Token length: ${#UPSTOX_TOKEN}"
+
           echo "=== CURRENT DIRECTORY ==="
           pwd
 
