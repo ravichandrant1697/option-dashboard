@@ -16,6 +16,7 @@ concurrency:
 jobs:
   session:
     runs-on: ubuntu-latest
+    environment: production 
     timeout-minutes: 300
 
     steps:
