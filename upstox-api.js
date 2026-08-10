@@ -23,6 +23,24 @@ function authHeaders() {
   return { Authorization: `Bearer ${ACCESS_TOKEN}`, Accept: "application/json" };
 }
 
+
+// Preflight: one cheap authenticated call (user profile) proves the token
+// is alive before the loop starts. An invalid token never heals mid-session
+// (Upstox tokens die at 3:30 AM IST, or the moment a newer one is
+// generated), so callers should abort on failure instead of polling.
+async function validateToken() {
+  try {
+    const res = await axios.get(${HOST}v2/user/profile, { headers: authHeaders() });
+    return { ok: true, userId: res.data?.data?.user_id };
+  } catch (e) {
+    return {
+      ok: false,
+      status: e.response?.status,
+      detail: e.response?.data?.errors?.[0]?.message || e.message
+    };
+  }
+}
+
 // Wrap a flat live-chain side ({ltp, oi, volume} directly) into the rich
 // shape (market_data + option_greeks) the rest of the engine expects.
 // Rich sides pass through untouched.
