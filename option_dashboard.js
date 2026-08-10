@@ -72,21 +72,7 @@ const { activateHorizon } = require("./horizons");
 const { validateToken } = require("./upstox-api");
 const { notify } = require("./notify");
 
-// Abort before any loop starts if the token is dead — a bad token can't
-// recover mid-session, and failing here makes the CI job fail in seconds
-// (with a Telegram alert) instead of idling for hours on 401s.
-async function requireValidToken() {
-  console.log("Validating Upstox token...");
-  const tok = await validateToken();
-  if (!tok.ok) {
-    await notify(
-      🔴 Upstox token invalid (HTTP ${tok.status}: ${tok.detail}) —  +
-      "aborting. Generate a fresh token and update the UPSTOX_TOKEN secret."
-    );
-    process.exit(1);
-  }
-  console.log("Token OK for user:", tok.userId);
-}
+
 const { loadWorkbookCache } = require("./workbook");
 const { initState } = require("./state");
 const { loadTuning, runTuning } = require("./tuning");
