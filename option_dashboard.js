@@ -143,7 +143,6 @@ if (mode === "backtest") {
     applyEnvConfig();
     activateHorizon(process.env.HORIZON);
 
-    await requireValidToken();
 
     console.log("Loading workbook...");
     loadWorkbookCache();
