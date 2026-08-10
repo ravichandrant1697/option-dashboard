@@ -123,7 +123,7 @@ if (mode === "backtest") {
     console.log("Running first cycle...");
     await run();
 
-    console.log(Polling every ${CONFIG.pollMs / 1000} seconds...);
+    console.log(`Polling every ${CONFIG.pollMs / 1000} seconds...`);
 
     setInterval(async () => {
       console.log("--------------------------------");
@@ -183,7 +183,7 @@ if (mode === "backtest") {
     console.log("Running first cycle...");
     await run();
 
-    console.log(Polling every ${CONFIG.pollMs / 1000} seconds...);
+    console.log(`Polling every ${CONFIG.pollMs / 1000} seconds...`);
 
     setInterval(async () => {
       console.log("--------------------------------");
