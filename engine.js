@@ -77,16 +77,7 @@ async function run() {
 
       return;
     }
- // A 401 (UDAPI100050) never heals mid-session — the token expired at
-      // 3:30 AM IST or was revoked by a newer token generation. Exit so the
-      // CI job fails visibly instead of polling a dead token for hours.
-      if (e.response?.status === 401) {
-        await notify(
-          "🔴 Upstox token rejected (401) — session aborted. " +
-          "Generate a fresh token and update the UPSTOX_TOKEN secret."
-        );
-        process.exit(1);
-      }
+
     
     if (!chain || !chain.length) {
       console.error("Empty option chain — skipping tick");
