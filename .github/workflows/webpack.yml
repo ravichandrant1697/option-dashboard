@@ -16,7 +16,7 @@ concurrency:
 jobs:
   session:
     runs-on: ubuntu-latest
-    environment: production 
+    environment: production
     timeout-minutes: 300
 
     steps:
@@ -32,6 +32,58 @@ jobs:
       - name: Install dependencies
         run: npm ci || npm install
 
+      # ==========================================
+      # TEST GITHUB ENVIRONMENT SECRETS
+      # ==========================================
+      - name: Test GitHub Secrets
+        env:
+          UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          echo "========================================="
+          echo "       TESTING GITHUB SECRETS"
+          echo "========================================="
+
+          echo "UPSTOX_TOKEN length: ${#UPSTOX_TOKEN}"
+          echo "TG_BOT_TOKEN length: ${#TG_BOT_TOKEN}"
+          echo "TG_CHAT_ID length: ${#TG_CHAT_ID}"
+
+          if [ -z "$UPSTOX_TOKEN" ]; then
+            echo "❌ UPSTOX_TOKEN is EMPTY"
+          else
+            echo "✅ UPSTOX_TOKEN is available"
+          fi
+
+          if [ -z "$TG_BOT_TOKEN" ]; then
+            echo "❌ TG_BOT_TOKEN is EMPTY"
+          else
+            echo "✅ TG_BOT_TOKEN is available"
+          fi
+
+          if [ -z "$TG_CHAT_ID" ]; then
+            echo "❌ TG_CHAT_ID is EMPTY"
+          else
+            echo "✅ TG_CHAT_ID is available"
+          fi
+
+          if [ -z "$UPSTOX_TOKEN" ] || \
+             [ -z "$TG_BOT_TOKEN" ] || \
+             [ -z "$TG_CHAT_ID" ]; then
+
+            echo ""
+            echo "❌ One or more GitHub secrets are missing."
+            echo "Check Settings → Environments → production → Environment secrets."
+            exit 1
+          fi
+
+          echo ""
+          echo "✅ ALL GITHUB SECRETS ARE AVAILABLE"
+          echo "========================================="
+
+      # ==========================================
+      # RUN TRADING SESSION
+      # ==========================================
       - name: Run trading session
         env:
           UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
@@ -125,6 +177,9 @@ jobs:
 
           echo "=== TRADING SESSION FINISHED ==="
 
+      # ==========================================
+      # FINAL STATE COMMIT
+      # ==========================================
       - name: Final state commit
         if: always()
         run: |
