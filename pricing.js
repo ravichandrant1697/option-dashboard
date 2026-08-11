@@ -96,10 +96,6 @@ function checkExit(pos, netNow, result) {
     if (pos._lastMissTs !== result.timestamp) {
       pos._signalMiss = (pos._signalMiss || 0) + 1;
       pos._lastMissTs = result.timestamp;
-      console.log(
-           ⚠️ signal mismatch ${pos._signalMiss}/${horizon.signalPersistence}  +
-          for ${pos.strategy} (bias ${pos.entryBias} → ${result.bias}, top ${result.strategy1})
-      );
     }
     if (pos._signalMiss >= horizon.signalPersistence)
       return { outcome: move >= 0 ? "WIN" : "LOSS", reason: "SIGNAL_CHANGE" };
