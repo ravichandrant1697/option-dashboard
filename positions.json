@@ -2,8 +2,8 @@
   "date": "2026-08-11",
   "open": [
     {
-      "id": 1786436512219,
-      "openedAt": "2026-08-11T08:21:52.219Z",
+      "id": 1786436960446,
+      "openedAt": "2026-08-11T08:29:20.446Z",
       "strategy": "Bear Put Spread",
       "legs": [
         {
@@ -20,9 +20,9 @@
         }
       ],
       "lots": 1,
-      "netEntry": 15.599999999999998,
-      "stopDist": 7.799999999999999,
-      "targetDist": 15.599999999999998,
+      "netEntry": 15.6,
+      "stopDist": 7.8,
+      "targetDist": 15.6,
       "confidence": 83,
       "entryBias": "Bearish",
       "trendAtEntry": "Flat",
@@ -31,5 +31,44 @@
       "expiry": "2026-08-11"
     }
   ],
-  "closedToday": []
+  "closedToday": [
+    {
+      "PosId": 1786436512219,
+      "Timestamp": "2026-08-11T08:21:52.219Z",
+      "ExitTime": "2026-08-11T08:25:19.144Z",
+      "Horizon": "intraday",
+      "Expiry": "2026-08-11",
+      "Strategy": "Bear Put Spread",
+      "Legs": "BUY 24450PE | SELL 24400PE",
+      "Lots": 1,
+      "NetEntry": 15.6,
+      "NetExit": 16.15,
+      "Result": "WIN",
+      "ExitReason": "SIGNAL_CHANGE",
+      "PnL": 35.75,
+      "RR": 2,
+      "Confidence": 83,
+      "EntryBias": "Bearish",
+      "TrendAtEntry": "Flat"
+    },
+    {
+      "PosId": 1786436839302,
+      "Timestamp": "2026-08-11T08:27:19.302Z",
+      "ExitTime": "2026-08-11T08:28:19.271Z",
+      "Horizon": "intraday",
+      "Expiry": "2026-08-11",
+      "Strategy": "Bear Put Spread",
+      "Legs": "BUY 24450PE | SELL 24400PE",
+      "Lots": 1,
+      "NetEntry": 16.25,
+      "NetExit": 15.45,
+      "Result": "LOSS",
+      "ExitReason": "SIGNAL_CHANGE",
+      "PnL": -52,
+      "RR": 2,
+      "Confidence": 83,
+      "EntryBias": "Bearish",
+      "TrendAtEntry": "Flat"
+    }
+  ]
 }
