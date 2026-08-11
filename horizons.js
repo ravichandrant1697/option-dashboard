@@ -44,7 +44,7 @@ const HORIZONS = {
   intraday: {
     name: "intraday",
     product: "I",
-    pollMs: 60000,                 // 60s — exits are minutes away
+    pollMs: 180000,                 // 60s — exits are minutes away
     trend: { source: "intraday" }, // last six 5-min candles (~30 min)
     trendRefreshMs: 5 * 60000,
     squareOff: true,
