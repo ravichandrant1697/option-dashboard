@@ -15,6 +15,12 @@ const { getNetPremium, exitLevels, getLots, getNetGreek } = require("./pricing")
 const { SHEETS, appendRow, flushWorkbook } = require("./workbook");
 const { tuning } = require("./tuning");
 
+// Human-readable leg summary, e.g. "BUY 24800CE | SELL 24900CE" — same
+// format as the Excel Legs column, reused in Telegram alerts.
+function legsSummary(legs) {
+  return legs.map(l => `${l.side} ${l.strike}${l.type}`).join(" | ");
+}
+
 // Execute all legs of a position as market orders. entry=true places the
 // legs as defined; entry=false reverses BUY↔SELL to square off. BUY
 // orders go first (hedge-first: margin benefit and safety). A failed leg
@@ -167,7 +173,7 @@ async function openPosition(result, plan) {
     Horizon: pos.horizon,
     Expiry: pos.expiry,
     Strategy: pos.strategy,
-    Legs: pos.legs.map(l => `${l.side} ${l.strike}${l.type}`).join(" | "),
+    Legs: legsSummary(pos.legs),
     Lots: pos.lots,
     NetEntry: Number(pos.netEntry.toFixed(2)),
     NetExit: "",
@@ -184,7 +190,7 @@ async function openPosition(result, plan) {
   await executeLegs(pos, true);
 
   await notify(
-    `🟢 PAPER ENTRY [${pos.horizon}] ${pos.strategy} x${pos.lots} lot(s) @ net ` +
+    `🟢 PAPER ENTRY [${pos.horizon}] ${pos.strategy} ${legsSummary(pos.legs)} x${pos.lots} lot(s) @ net ` +
       `${pos.netEntry.toFixed(2)} | stop -${pos.stopDist.toFixed(2)} ` +
       `| target +${pos.targetDist.toFixed(2)} | conf ${pos.confidence} | exp ${pos.expiry}`
   );
@@ -205,7 +211,7 @@ async function closePosition(pos, netNow, outcome, reason) {
     Horizon: pos.horizon ?? "",
     Expiry: pos.expiry ?? "",
     Strategy: pos.strategy,
-    Legs: pos.legs.map(l => `${l.side} ${l.strike}${l.type}`).join(" | "),
+    Legs: legsSummary(pos.legs),
     Lots: pos.lots,
     NetEntry: Number(pos.netEntry.toFixed(2)),
     NetExit: Number(netNow.toFixed(2)),
@@ -233,7 +239,7 @@ async function closePosition(pos, netNow, outcome, reason) {
   await executeLegs(pos, false);
 
   await notify(
-    `${outcome === "WIN" ? "✅" : "🔴"} PAPER EXIT ${pos.strategy} ` +
+    `${outcome === "WIN" ? "✅" : "🔴"} PAPER EXIT ${pos.strategy} ${legsSummary(pos.legs)} ` +
       `${outcome} (${reason}) | PnL ₹${trade.PnL}`
   );
   runtime.closingIds.delete(pos.id);
