@@ -463,6 +463,29 @@ function analyze(chain, marketPcr) {
         [hasGreeks, avgGamma > 0.02, 30],
         [hasGreeks, avgVega > 1, 30]
       ])
+    },
+    {
+      // Naked long call — a higher-conviction, uncapped-upside version of
+      // Bull Call Spread. Thresholds are stricter (pcr/OI dominance ratio,
+      // deeper delta) so it only outscores the spread when the bullish
+      // case is unusually strong, not just present.
+      strategy: "Buy Call",
+      score: scoreOf([
+        [true, pcr > 1.1, 25],
+        [true, bullishOI > bearishOI * 1.5, 25],
+        [hasGreeks, avgCallDelta > 0.55, 25],
+        [candleTrend !== null, bias === "Bullish" && candleTrend === "Up", 25]
+      ])
+    },
+    {
+      // Naked long put — mirror of Buy Call for the bearish case.
+      strategy: "Buy Put",
+      score: scoreOf([
+        [true, pcr < 0.9, 25],
+        [true, bearishOI > bullishOI * 1.5, 25],
+        [hasGreeks, avgPutDelta > 0.55, 25],
+        [candleTrend !== null, bias === "Bearish" && candleTrend === "Down", 25]
+      ])
     }
   ];
 
