@@ -18,7 +18,7 @@ const TUNING_FILE = "tuning.json";           // self-tuned parameters, writ
 // prompts (NIFTY or Stock, and the gap between strikes for spreads).
 const CONFIG = {
   instrumentKey: "NSE_INDEX|Nifty 50",
-  expiryDate: "2026-08-11", // nearest expiry — update weekly (auto-pick is a V6 item)
+  expiryDate: "2026-08-18", // nearest expiry — update weekly (auto-pick is a V6 item)
   strikeRange: 1000,         // analyze ATM ± this many points
   strikeDiff: 50,           // spread width: sell leg = ATM ± strikeDiff (asked at startup)
   pollMs: 180000,           // poll every 3 min — Upstox refreshes OI on that cadence,
