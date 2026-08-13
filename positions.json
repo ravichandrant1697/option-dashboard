@@ -1,36 +1,6 @@
 {
   "date": "2026-08-13",
-  "open": [
-    {
-      "id": 1786597737221,
-      "openedAt": "2026-08-13T05:08:57.221Z",
-      "strategy": "Bear Put Spread",
-      "legs": [
-        {
-          "strike": 24350,
-          "type": "PE",
-          "side": "BUY",
-          "instrument_key": "NSE_FO|45105"
-        },
-        {
-          "strike": 24300,
-          "type": "PE",
-          "side": "SELL",
-          "instrument_key": "NSE_FO|45103"
-        }
-      ],
-      "lots": 1,
-      "netEntry": 21.400000000000006,
-      "stopDist": 10.700000000000003,
-      "targetDist": 21.400000000000006,
-      "confidence": 83,
-      "entryBias": "Bearish",
-      "trendAtEntry": "Flat",
-      "horizon": "intraday",
-      "product": "I",
-      "expiry": "2026-08-18"
-    }
-  ],
+  "open": [],
   "closedToday": [
     {
       "PosId": 1786592875954,
@@ -217,6 +187,25 @@
       "Result": "LOSS",
       "ExitReason": "SIGNAL_CHANGE",
       "PnL": -32.5,
+      "RR": 2,
+      "Confidence": 83,
+      "EntryBias": "Bearish",
+      "TrendAtEntry": "Flat"
+    },
+    {
+      "PosId": 1786597737221,
+      "Timestamp": "2026-08-13T05:08:57.221Z",
+      "ExitTime": "2026-08-13T05:11:57.432Z",
+      "Horizon": "intraday",
+      "Expiry": "2026-08-18",
+      "Strategy": "Bear Put Spread",
+      "Legs": "BUY 24350PE | SELL 24300PE",
+      "Lots": 1,
+      "NetEntry": 21.4,
+      "NetExit": 20.65,
+      "Result": "LOSS",
+      "ExitReason": "SIGNAL_CHANGE",
+      "PnL": -48.75,
       "RR": 2,
       "Confidence": 83,
       "EntryBias": "Bearish",
