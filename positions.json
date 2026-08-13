@@ -39,6 +39,25 @@
       "Confidence": 100,
       "EntryBias": "Bearish",
       "TrendAtEntry": ""
+    },
+    {
+      "PosId": 1786594676418,
+      "Timestamp": "2026-08-13T04:17:56.418Z",
+      "ExitTime": "2026-08-13T04:20:56.920Z",
+      "Horizon": "intraday",
+      "Expiry": "2026-08-18",
+      "Strategy": "Bear Put Spread",
+      "Legs": "BUY 24350PE | SELL 24300PE",
+      "Lots": 1,
+      "NetEntry": 20.3,
+      "NetExit": 19.05,
+      "Result": "LOSS",
+      "ExitReason": "SIGNAL_CHANGE",
+      "PnL": -81.25,
+      "RR": 2,
+      "Confidence": 83,
+      "EntryBias": "Bearish",
+      "TrendAtEntry": "Flat"
     }
   ]
 }
