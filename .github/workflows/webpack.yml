@@ -50,21 +50,21 @@ jobs:
           echo "TG_CHAT_ID length: ${#TG_CHAT_ID}"
 
           if [ -z "$UPSTOX_TOKEN" ]; then
-            echo "âŒ UPSTOX_TOKEN is EMPTY"
+            echo "UPSTOX_TOKEN is EMPTY"
           else
-            echo "âœ… UPSTOX_TOKEN is available"
+            echo "UPSTOX_TOKEN is available"
           fi
 
           if [ -z "$TG_BOT_TOKEN" ]; then
-            echo "âŒ TG_BOT_TOKEN is EMPTY"
+            echo "TG_BOT_TOKEN is EMPTY"
           else
-            echo "âœ… TG_BOT_TOKEN is available"
+            echo "TG_BOT_TOKEN is available"
           fi
 
           if [ -z "$TG_CHAT_ID" ]; then
-            echo "âŒ TG_CHAT_ID is EMPTY"
+            echo "TG_CHAT_ID is EMPTY"
           else
-            echo "âœ… TG_CHAT_ID is available"
+            echo "TG_CHAT_ID is available"
           fi
 
           if [ -z "$UPSTOX_TOKEN" ] || \
@@ -72,13 +72,13 @@ jobs:
              [ -z "$TG_CHAT_ID" ]; then
 
             echo ""
-            echo "âŒ One or more GitHub secrets are missing."
+            echo "One or more GitHub secrets are missing."
             echo "Check Settings â†’ Environments â†’ production â†’ Environment secrets."
             exit 1
           fi
 
           echo ""
-          echo "âœ… ALL GITHUB SECRETS ARE AVAILABLE"
+          echo "ALL GITHUB SECRETS ARE AVAILABLE"
           echo "========================================="
 
       # ==========================================
