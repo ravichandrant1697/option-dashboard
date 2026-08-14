@@ -3,15 +3,28 @@
  * execution (opt-in). The paper journal (Trades sheet) is always written;
  * live mode ADDS real orders on top.
  */
-const { LOT_SIZE, RULES, CONFIG } = require("./config");
-const { daysUntil } = require("./clock");
+const {
+  LOT_SIZE,
+  RULES,
+  CONFIG,
+  MIN_EDGE_MULTIPLE,
+  OI_STRONG_RATIO,
+  RISK_REWARD
+} = require("./config");
+const { daysUntil, istTimestamp } = require("./clock");
 const { getActiveHorizon } = require("./horizons");
 const runtime = require("./runtime");
 const { placeOrder } = require("./upstox-api");
 const { notify } = require("./notify");
 const { getState, saveState } = require("./state");
 const { recommend, toLegs } = require("./strategies");
-const { getNetPremium, exitLevels, getLots, getNetGreek } = require("./pricing");
+const {
+  getNetPremium,
+  exitLevels,
+  getLots,
+  getNetGreek,
+  estimateRoundTripCharges
+} = require("./pricing");
 const { SHEETS, appendRow, flushWorkbook } = require("./workbook");
 const { tuning } = require("./tuning");
 
@@ -56,25 +69,31 @@ async function executeLegs(pos, entry) {
 
 // Turn the analysis into an executable plan: apply the confidence filter,
 // build the top strategy's legs, price them, derive stop/target and lots.
-// Returns null when there is nothing tradeable this tick.
+//
+// SIGNAL vs EXECUTION: a valid signal is ALWAYS priced and returned so the
+// journal keeps its entry-signal columns every tick — expiry day included.
+// Execution-only gates (DTE, theta, same-legs, cost floor) don't kill the
+// plan; they set plan.blocked with the reason, the Dashboard row records
+// it in the Blocked column, and the engine refuses to open the position.
+// Returns null only when there is no signal to price at all (confidence
+// below the filter, no strategy, no quote).
 function buildTradePlan(result, chain) {
   if (result.confidence < RULES.minConfidence) return null; // trade filter
 
   const horizon = getActiveHorizon();
   const candleTrend = runtime.getCandleTrend();
+  let blocked = null; // first tripped execution gate wins
 
-  // Multi-day horizons: the chosen expiry must leave room to actually
-  // HOLD — a 4-DTE weekly cannot host a one-month positional view.
-  // Sample: positional (minEntryDTE 10) + expiry 2026-08-11 on Aug 7
-  //   → DTE 4 → ⛔ blocked; expiry 2026-09-08 → DTE 32 → passes.
+  // Execution gate — the chosen expiry must leave room to actually HOLD:
+  // intraday minEntryDTE 1 keeps expiry-day (DTE 0) positions off — the
+  // recorded expiry-day signal was a coin flip (41–55%) while IV/theta
+  // readings blew up; a 4-DTE weekly cannot host a one-month positional
+  // view either (positional needs ≥ 10).
   if (horizon.minEntryDTE) {
     const dte = daysUntil(CONFIG.expiryDate);
     if (dte < horizon.minEntryDTE) {
-      console.log(
-        `⛔ ENTRY blocked (${horizon.name}): expiry ${CONFIG.expiryDate} is only ` +
-          `${dte}d away — needs ≥ ${horizon.minEntryDTE}d. Pick a farther (monthly) expiry.`
-      );
-      return null;
+      blocked = `expiry ${dte}d away < min ${horizon.minEntryDTE}d (${horizon.name})`;
+      console.log(`⛔ ENTRY gate (${horizon.name}): ${blocked} — signal still logged`);
     }
   }
 
@@ -112,7 +131,19 @@ function buildTradePlan(result, chain) {
     leg.instrument_key = side?.instrument_key || null;
   }
 
-  const { stopDist, targetDist } = exitLevels(netEntry);
+  // Conviction mode from the OI flow behind this signal:
+  //   dominant side ≥ OI_STRONG_RATIO (2.5×) → "ride": no fixed target,
+  //   the signal reversal takes the profit. Limited support → "scalp":
+  //   bank the 5–10 pt band. Range structures keep the % rule.
+  const dominance =
+    result.bias === "Bullish" ? result.bullishOI / Math.max(1, result.bearishOI) :
+    result.bias === "Bearish" ? result.bearishOI / Math.max(1, result.bullishOI) : 0;
+  const exitMode =
+    result.bias === "Range" ? "default" :
+    dominance >= OI_STRONG_RATIO ? "ride" : "scalp";
+  const { stopDist, targetDist } = exitLevels(netEntry, exitMode, legs.length === 1);
+  // reference target for gates that need a number in ride mode (no target)
+  const refTarget = targetDist ?? stopDist * RISK_REWARD;
 
   // Theta gate (multi-day horizons, DEBIT structures only): time decay
   // over the planned hold must not eat more than half the target move —
@@ -125,21 +156,45 @@ function buildTradePlan(result, chain) {
     const netTheta = getNetGreek(chain, legs, "theta");
     if (netTheta !== null) {
       const projectedDecay = Math.max(0, -netTheta) * horizon.plannedHoldDays;
-      const cap = targetDist * 0.5;
+      const cap = refTarget * 0.5;
       console.log(
         `⏳ THETA gate (${horizon.name}): net θ ${netTheta.toFixed(2)}/day × ` +
           `${horizon.plannedHoldDays}d = −${projectedDecay.toFixed(2)} vs cap ${cap.toFixed(2)}`
       );
       if (projectedDecay > cap) {
-        console.log(`⛔ ENTRY blocked (${horizon.name}): theta decay would eat the edge`);
-        return null;
+        blocked = blocked ?? `theta decay ${projectedDecay.toFixed(1)} > cap ${cap.toFixed(1)} (${horizon.name})`;
+        console.log(`⛔ ENTRY gate (${horizon.name}): theta decay would eat the edge — signal still logged`);
       }
     }
   }
 
   const lots = getLots(netEntry, stopDist);
 
-  return { rec, legs, netEntry, stopDist, targetDist, lots };
+  // Execution gate (churn): never re-enter a structure already traded
+  // today. The first live days show exits re-entered into the IDENTICAL
+  // legs 1–3 minutes later — each lap cost ~₹100 in charges to reprice
+  // the same idea. A new ATM (spot moved a strike) builds different legs
+  // and passes naturally.
+  const summary = legsSummary(legs);
+  if (!blocked && getState().closedToday.some(t => t.Legs === summary)) {
+    blocked = "same legs already traded today";
+    console.log(`⛔ ENTRY gate: ${summary} already traded today — signal still logged`);
+  }
+
+  // Execution gate (cost floor): reward at full target must be ≥
+  // MIN_EDGE_MULTIPLE × the estimated Upstox round-trip charges. At 1 lot
+  // the flat brokerage+GST (~₹94) alone is ~1.45 premium points — trades
+  // whose target can't clearly beat that are donations to the broker.
+  const estCharges = estimateRoundTripCharges(chain, legs, lots || 1);
+  if (estCharges !== null && !blocked) {
+    const reward = refTarget * LOT_SIZE * (lots || 1);
+    if (reward < MIN_EDGE_MULTIPLE * estCharges) {
+      blocked = `reward ₹${reward.toFixed(0)} < ${MIN_EDGE_MULTIPLE}× charges ₹${estCharges.toFixed(0)}`;
+      console.log(`⛔ ENTRY gate (cost floor): ${blocked} — signal still logged`);
+    }
+  }
+
+  return { rec, legs, netEntry, stopDist, targetDist, exitMode, lots, estCharges: estCharges ?? 0, blocked };
 }
 
 // Open a paper position: store it in the in-memory state, record the
@@ -149,13 +204,16 @@ async function openPosition(result, plan) {
   const horizon = getActiveHorizon();
   const pos = {
     id: Date.now(),
-    openedAt: new Date().toISOString(),
+    openedAt: istTimestamp(),  // IST wall clock — journal display format
+    openedAtMs: Date.now(),    // epoch ms — ALL duration math uses this
     strategy: plan.rec.strategy,
     legs: plan.legs,
     lots: plan.lots,
     netEntry: plan.netEntry,
     stopDist: plan.stopDist,
-    targetDist: plan.targetDist,
+    targetDist: plan.targetDist, // null = ride mode (no fixed target)
+    exitMode: plan.exitMode,     // ride | scalp | default — journaled for tuning
+    estCharges: plan.estCharges, // Upstox round-trip estimate, deducted at close
     confidence: result.confidence,
     entryBias: result.bias, // signal-change exit compares against this
     trendAtEntry: runtime.getCandleTrend(), // recorded so tuning can learn from it
@@ -179,8 +237,13 @@ async function openPosition(result, plan) {
     NetExit: "",
     Result: "OPEN",
     ExitReason: "",
+    GrossPnL: "",
+    Charges: pos.estCharges ?? 0,
     PnL: "",
-    RR: pos.stopDist > 0 ? Number((pos.targetDist / pos.stopDist).toFixed(2)) : 0,
+    ExitMode: pos.exitMode ?? "",
+    RR: pos.targetDist != null && pos.stopDist > 0
+      ? Number((pos.targetDist / pos.stopDist).toFixed(2))
+      : "", // ride mode has no fixed target, so no RR
     Confidence: pos.confidence,
     EntryBias: result.bias,
     TrendAtEntry: pos.trendAtEntry ?? ""
@@ -192,7 +255,8 @@ async function openPosition(result, plan) {
   await notify(
     `🟢 PAPER ENTRY [${pos.horizon}] ${pos.strategy} ${legsSummary(pos.legs)} x${pos.lots} lot(s) @ net ` +
       `${pos.netEntry.toFixed(2)} | stop -${pos.stopDist.toFixed(2)} ` +
-      `| target +${pos.targetDist.toFixed(2)} | conf ${pos.confidence} | exp ${pos.expiry}`
+      `| ${pos.targetDist != null ? `target +${pos.targetDist.toFixed(2)}` : "RIDE (exit on signal reversal)"}` +
+      ` | conf ${pos.confidence} | exp ${pos.expiry}`
   );
 }
 
@@ -204,10 +268,15 @@ async function closePosition(pos, netNow, outcome, reason) {
   runtime.closingIds.add(pos.id);
 
   const qty = pos.lots * LOT_SIZE;
+  // PnL is NET of the estimated Upstox round-trip charges (see COSTS in
+  // config.js) — the tuner and backtester read PnL, so they learn from
+  // what actually lands in the account, not the gross premium move.
+  const gross = (netNow - pos.netEntry) * qty;
+  const chargesRs = pos.estCharges ?? 0;
   const trade = {
     PosId: pos.id,
     Timestamp: pos.openedAt,
-    ExitTime: new Date().toISOString(),
+    ExitTime: istTimestamp(),
     Horizon: pos.horizon ?? "",
     Expiry: pos.expiry ?? "",
     Strategy: pos.strategy,
@@ -217,8 +286,13 @@ async function closePosition(pos, netNow, outcome, reason) {
     NetExit: Number(netNow.toFixed(2)),
     Result: outcome,
     ExitReason: reason,
-    PnL: Number(((netNow - pos.netEntry) * qty).toFixed(2)),
-    RR: pos.stopDist > 0 ? Number((pos.targetDist / pos.stopDist).toFixed(2)) : 0,
+    GrossPnL: Number(gross.toFixed(2)),
+    Charges: chargesRs,
+    PnL: Number((gross - chargesRs).toFixed(2)),
+    ExitMode: pos.exitMode ?? "",
+    RR: pos.targetDist != null && pos.stopDist > 0
+      ? Number((pos.targetDist / pos.stopDist).toFixed(2))
+      : "", // ride mode has no fixed target, so no RR
     Confidence: pos.confidence,
     EntryBias: pos.entryBias,
     TrendAtEntry: pos.trendAtEntry ?? ""
@@ -240,7 +314,7 @@ async function closePosition(pos, netNow, outcome, reason) {
 
   await notify(
     `${outcome === "WIN" ? "✅" : "🔴"} PAPER EXIT ${pos.strategy} ${legsSummary(pos.legs)} ` +
-      `${outcome} (${reason}) | PnL ₹${trade.PnL}`
+      `${outcome} (${reason}) | PnL ₹${trade.PnL} (gross ₹${trade.GrossPnL} − charges ₹${chargesRs})`
   );
   runtime.closingIds.delete(pos.id);
 }
