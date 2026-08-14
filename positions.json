@@ -32,8 +32,8 @@
       "horizon": "intraday",
       "product": "I",
       "expiry": "2026-08-18",
-      "_signalMiss": 2,
-      "_lastMissTs": "2026-08-14 14:48:21"
+      "_signalMiss": 1,
+      "_lastMissTs": "2026-08-14 15:00:21"
     }
   ],
   "closedToday": [
