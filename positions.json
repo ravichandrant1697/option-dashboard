@@ -31,7 +31,9 @@
       "trendAtEntry": "Up",
       "horizon": "intraday",
       "product": "I",
-      "expiry": "2026-08-18"
+      "expiry": "2026-08-18",
+      "_signalMiss": 1,
+      "_lastMissTs": "2026-08-14 12:33:07"
     }
   ],
   "closedToday": [
