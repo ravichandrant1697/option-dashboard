@@ -7,7 +7,7 @@
  * EXITS: STOP | TARGET | SIGNAL_CHANGE (bias or top strategy no longer
  * matches the open position) | SQUARE_OFF (15:20 IST).
  */
-const { isMarketOpen, isSquareOffTime, pastIST, todayIST } = require("./clock");
+const { isMarketOpen, isSquareOffTime, pastIST, todayIST, istTimestamp } = require("./clock");
 const { fetchMarketData } = require("./upstox-api");
 const { analyze, maybeRefreshCandleTrend } = require("./signals");
 const { buildTradePlan, openPosition, closePosition } = require("./trade");
@@ -21,7 +21,7 @@ const runtime = require("./runtime");
 
 async function run() {
   console.log("\n==================================================");
-  console.log("RUN START:", new Date().toLocaleString());
+  console.log("RUN START:", istTimestamp(), "IST"); // CI machines run UTC — log IST
   console.log("==================================================");
 
   try {
@@ -117,7 +117,7 @@ async function run() {
     console.log(
       "Trade Plan:",
       plan
-        ? `${plan.rec.strategy} | Lots=${plan.lots}`
+        ? `${plan.rec.strategy} | Lots=${plan.lots}${plan.blocked ? ` | ENTRY BLOCKED: ${plan.blocked}` : ""}`
         : "NO TRADE"
     );
 
@@ -172,7 +172,9 @@ async function run() {
 
     // The 15:20 no-new-entries cutoff applies to the intraday horizon
     // only — positional/swing positions are MEANT to be held overnight.
-    if (plan && plan.lots >= 1 && (!getActiveHorizon().squareOff || !isSquareOffTime())) {
+    // plan.blocked = signal logged but an execution gate (DTE/theta/
+    // same-legs/cost floor) refused the trade — see buildTradePlan.
+    if (plan && !plan.blocked && plan.lots >= 1 && (!getActiveHorizon().squareOff || !isSquareOffTime())) {
 
       console.log("Checking entry conditions...");
 
