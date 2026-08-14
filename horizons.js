@@ -49,9 +49,16 @@ const HORIZONS = {
     trendRefreshMs: 5 * 60000,
     squareOff: true,
     maxHoldDays: null,             // the square-off IS the time stop
-    minEntryDTE: 0,
+    minEntryDTE: 1,                // no expiry-day entries: on 2026-08-11 (DTE 0)
+                                   // the bias signal was a coin flip (41–55%
+                                   // accurate) while IV/theta readings blew up
+                                   // (AvgIV 260, AvgTheta 3839) — no exit rule
+                                   // made that day profitable in replay
     exitBufferDays: 0,
-    signalPersistence: 1,          // first mismatching poll exits (as before)
+    signalPersistence: 3,          // one noisy poll must not exit a position:
+                                   // at persistence 1 every trade in the first
+                                   // 3 live days died by SIGNAL_CHANGE in 1–9
+                                   // min, with 0 STOP/TARGET exits ever
     plannedHoldDays: 0             // theta gate off — decay is intraday noise
   },
 
