@@ -50,21 +50,21 @@ jobs:
           echo "TG_CHAT_ID length: ${#TG_CHAT_ID}"
 
           if [ -z "$UPSTOX_TOKEN" ]; then
-            echo "❌ UPSTOX_TOKEN is EMPTY"
+            echo "âŒ UPSTOX_TOKEN is EMPTY"
           else
-            echo "✅ UPSTOX_TOKEN is available"
+            echo "âœ… UPSTOX_TOKEN is available"
           fi
 
           if [ -z "$TG_BOT_TOKEN" ]; then
-            echo "❌ TG_BOT_TOKEN is EMPTY"
+            echo "âŒ TG_BOT_TOKEN is EMPTY"
           else
-            echo "✅ TG_BOT_TOKEN is available"
+            echo "âœ… TG_BOT_TOKEN is available"
           fi
 
           if [ -z "$TG_CHAT_ID" ]; then
-            echo "❌ TG_CHAT_ID is EMPTY"
+            echo "âŒ TG_CHAT_ID is EMPTY"
           else
-            echo "✅ TG_CHAT_ID is available"
+            echo "âœ… TG_CHAT_ID is available"
           fi
 
           if [ -z "$UPSTOX_TOKEN" ] || \
@@ -72,13 +72,13 @@ jobs:
              [ -z "$TG_CHAT_ID" ]; then
 
             echo ""
-            echo "❌ One or more GitHub secrets are missing."
-            echo "Check Settings → Environments → production → Environment secrets."
+            echo "âŒ One or more GitHub secrets are missing."
+            echo "Check Settings â†’ Environments â†’ production â†’ Environment secrets."
             exit 1
           fi
 
           echo ""
-          echo "✅ ALL GITHUB SECRETS ARE AVAILABLE"
+          echo "âœ… ALL GITHUB SECRETS ARE AVAILABLE"
           echo "========================================="
 
       # ==========================================
@@ -129,6 +129,9 @@ jobs:
 
           git config user.name "trading-bot"
           git config user.email "trading-bot@users.noreply.github.com"
+
+          echo "=== SYNCING LATEST STATE ==="
+          git pull --rebase origin "${GITHUB_REF_NAME}" || true
 
           echo "=== STARTING TRADING ENGINE ==="
 
