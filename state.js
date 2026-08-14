@@ -6,7 +6,7 @@
  */
 const fs = require("fs");
 const { POSITIONS_FILE, RULES } = require("./config");
-const { todayIST } = require("./clock");
+const { todayIST, nowIST } = require("./clock");
 
 // In-memory position state — the live loop reads and writes ONLY this
 // object; positions.json is touched once at startup (recovery) and is
@@ -61,6 +61,21 @@ function canOpen() {
     tail.every(t => t.Result === "LOSS")
   )
     return `${RULES.maxConsecutiveLosses} losses in a row — done for today`;
+
+  // Churn guard: wait out the cooldown after any exit before re-entering.
+  // Without it the loop exits and re-enters within 1–3 polls, paying the
+  // full ~₹100 round-trip charges each lap for sub-point premium moves.
+  const lastExit = state.closedToday[state.closedToday.length - 1];
+  if (lastExit?.ExitTime) {
+    // ExitTime is an IST wall-clock string ("YYYY-MM-DD HH:mm:ss") that
+    // parses as machine-local time — measure it against nowIST(), which
+    // shares that representation, so the math is right on any machine.
+    const sinceMs = nowIST().getTime() - new Date(lastExit.ExitTime).getTime();
+    if (sinceMs >= 0 && sinceMs < RULES.reentryCooldownMs) {
+      const waitMin = Math.ceil((RULES.reentryCooldownMs - sinceMs) / 60000);
+      return `re-entry cooldown — ${waitMin} min left`;
+    }
+  }
 
   return null;
 }
