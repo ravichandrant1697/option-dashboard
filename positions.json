@@ -34,12 +34,12 @@
       "product": "I",
       "expiry": "2026-08-18",
       "_signalMiss": 0,
-      "_lastMissTs": "2026-08-17 09:36:45"
+      "_lastMissTs": "2026-08-17 09:42:45"
     }
   ],
   "closedToday": [],
   "biasStreak": {
     "bias": "Bearish",
-    "count": 1
+    "count": 2
   }
 }
