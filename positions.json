@@ -45,10 +45,32 @@
       "Confidence": 100,
       "EntryBias": "Bearish",
       "TrendAtEntry": "Down"
+    },
+    {
+      "PosId": 1786948248750,
+      "Timestamp": "2026-08-17 12:00:48",
+      "ExitTime": "2026-08-17 12:09:48",
+      "Horizon": "intraday",
+      "Expiry": "2026-08-18",
+      "Strategy": "Buy Call",
+      "Legs": "BUY 24250CE",
+      "Lots": 1,
+      "NetEntry": 83.4,
+      "NetExit": 78.9,
+      "Result": "LOSS",
+      "ExitReason": "SIGNAL_CHANGE",
+      "GrossPnL": -292.5,
+      "Charges": 57.34,
+      "PnL": -349.84,
+      "ExitMode": "scalp",
+      "RR": 2,
+      "Confidence": 83,
+      "EntryBias": "Bullish",
+      "TrendAtEntry": "Up"
     }
   ],
   "biasStreak": {
-    "bias": "Bullish",
-    "count": 1
+    "bias": "Bearish",
+    "count": 2
   }
 }
