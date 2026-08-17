@@ -48,12 +48,16 @@ const RISK_REWARD = 2;
 // conviction → NO fixed target: the position rides until the signal
 // reverses (SIGNAL_CHANGE is the take-profit; the stop still protects).
 // Below the ratio = limited OI support → scalp: take profit at the 5–10 pt
-// band (target SCALP_TARGET_POINTS, stop = target / RISK_REWARD keeps 1:2).
+// band (target SCALP_TARGET_POINTS, stop = target / RISK_REWARD keeps 1:2,
+// and once the move has SEEN +SCALP_LOCK_POINTS a pullback to that level
+// banks the win instead of round-tripping back to the stop).
 // Range-bias structures (condor/straddle) keep the %-of-premium rule.
-// Naked legs only trigger at ≥ 2.5× dominance, so they always ride —
-// with their tight 5-pt stop.
+// NAKED legs (Buy Call / Buy Put) always scalp, never ride: their edge is
+// the quick 5–10 pt band, and an unhedged ATM option left riding through
+// a chop day donates the whole band back plus theta.
 const OI_STRONG_RATIO = 2.5;
 const SCALP_TARGET_POINTS = 10;
+const SCALP_LOCK_POINTS = 5;
 
 // Upstox NSE-options charge model (per executed ORDER — each leg is one
 // order, entry and exit are separate orders). Rates as of Oct 2024 revision.
@@ -84,6 +88,13 @@ const TUNING_REGIME_START = "2026-08-14";
 
 const RULES = {
   minConfidence: 70,          // trade filter: below this → NO TRADE
+  // Entry-side persistence: the CURRENT bias must have held for this many
+  // consecutive polls (including this one) before any entry is allowed.
+  // Exits had persistence from 2026-08-13 but entries fired on a single
+  // poll's bias — on 2026-08-14 (chop, bias flipped ~60×/117 polls) that
+  // asymmetry entered trades on 1- and 2-poll bias blips inside opposite
+  // stretches. 2 polls = ~6 min of agreement at the 3-min cadence.
+  entryBiasPersistence: 2,
   maxOpenPositions: 1,
   maxDailyLoss: MAX_RISK,     // one full-risk loss ends the day
   maxConsecutiveLosses: 3,    // 3 losses in a row → done for the day
@@ -130,6 +141,7 @@ module.exports = {
   RISK_REWARD,
   OI_STRONG_RATIO,
   SCALP_TARGET_POINTS,
+  SCALP_LOCK_POINTS,
   COSTS,
   MIN_EDGE_MULTIPLE,
   TUNING_REGIME_START,
