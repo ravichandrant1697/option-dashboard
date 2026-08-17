@@ -7,6 +7,7 @@ const {
   STOP_PCT,
   RISK_REWARD,
   SCALP_TARGET_POINTS,
+  SCALP_LOCK_POINTS,
   MAX_RISK,
   LOT_SIZE,
   MAX_LOTS,
@@ -52,8 +53,13 @@ function getNetPremium(chain, legs) {
 //             null safely; JSON turns Infinity into null anyway, but then
 //             a restart would compare move >= null — always true — and
 //             instantly close every ride position as a TARGET win.)
-//   "scalp"   limited OI support — bank the 5–10 pt band: target
-//             SCALP_TARGET_POINTS (10), stop = target / RISK_REWARD (5).
+//   "scalp"   bank the 5–10 pt band: target SCALP_TARGET_POINTS (10),
+//             stop = target / RISK_REWARD (5), and lockDist =
+//             SCALP_LOCK_POINTS (5) — once the move has SEEN +5 pts, a
+//             pullback to that level exits PROFIT_LOCK instead of letting
+//             the win round-trip back to the stop. Every scalp therefore
+//             banks 5–10 points once it reaches +5. Naked legs are ALWAYS
+//             scalp mode (forced in trade.js).
 //   "default" Range structures — stop = STOP_PCT (50%) of net premium,
 //             target = RISK_REWARD (2) × stop (credit: full decay).
 // Naked legs keep the tight scalp stop (5 pts) in every mode — a ₹36 ATM
@@ -67,11 +73,13 @@ function exitLevels(netEntry, mode = "default", nakedLeg = false) {
     mode === "ride" ? null :
     mode === "scalp" ? SCALP_TARGET_POINTS :
     stopDist * RISK_REWARD;
-  return { stopDist, targetDist };
+  const lockDist = mode === "scalp" ? SCALP_LOCK_POINTS : null;
+  return { stopDist, targetDist, lockDist };
 }
 
 // Exit decision for an open position, horizon-aware. Priority order:
-//   STOP → TARGET → TIME_STOP → EXPIRY_STOP → SIGNAL_CHANGE → SQUARE_OFF.
+//   STOP → TARGET → PROFIT_LOCK → TIME_STOP → EXPIRY_STOP →
+//   SIGNAL_CHANGE → SQUARE_OFF.
 //
 //   TIME_STOP      position held past the horizon's maxHoldDays
 //                  (positional 30d, swing 90d — the playbook's limits)
@@ -104,6 +112,16 @@ function checkExit(pos, netNow, result) {
   // SIGNAL_CHANGE reversal below is their take-profit
   if (pos.targetDist != null && move >= pos.targetDist)
     return { outcome: "WIN", reason: "TARGET" };
+
+  // PROFIT_LOCK (scalp's 5–10 pt band floor): once the move has traded
+  // ABOVE lockDist, a pullback to/below it banks the win — a scalp that
+  // reached +5 must never round-trip back to the -5 stop. _lockArmed
+  // lives on pos (persisted in positions.json), so a restart keeps it.
+  if (pos.lockDist != null) {
+    if (move > pos.lockDist) pos._lockArmed = true;
+    else if (pos._lockArmed && move <= pos.lockDist)
+      return { outcome: "WIN", reason: "PROFIT_LOCK" };
+  }
 
   if (horizon.maxHoldDays) {
     // openedAtMs is epoch ms (new positions). Legacy positions only carry
