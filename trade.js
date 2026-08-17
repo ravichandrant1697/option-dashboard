@@ -97,6 +97,20 @@ function buildTradePlan(result, chain) {
     }
   }
 
+  // Execution gate (entry persistence): the bias must have held for
+  // entryBiasPersistence consecutive polls — the entry-side mirror of the
+  // SIGNAL_CHANGE exit rule. Entries used to fire on a single poll's bias:
+  // on the 2026-08-14 chop day (bias flipped ~60×/117 polls) that entered
+  // trades on 1- and 2-poll blips inside opposite-bias stretches. The
+  // engine updates the streak (state.trackBiasStreak) before building the
+  // plan, so the current poll counts toward it.
+  const streak = getState().biasStreak || { bias: null, count: 0 };
+  if (!blocked && (streak.bias !== result.bias || streak.count < RULES.entryBiasPersistence)) {
+    const seen = streak.bias === result.bias ? streak.count : 0;
+    blocked = `bias ${result.bias} persisted ${seen}/${RULES.entryBiasPersistence} polls`;
+    console.log(`⛔ ENTRY gate (persistence): ${blocked} — signal still logged`);
+  }
+
   // Tuning gate: skip counter-trend entries when history showed they lose
   if (tuning.requireTrendMatch && candleTrend !== null) {
     const matches =
@@ -135,13 +149,18 @@ function buildTradePlan(result, chain) {
   //   dominant side ≥ OI_STRONG_RATIO (2.5×) → "ride": no fixed target,
   //   the signal reversal takes the profit. Limited support → "scalp":
   //   bank the 5–10 pt band. Range structures keep the % rule.
+  // NAKED legs (single leg) always scalp, never ride — their trigger
+  // already requires ≥ 2.5× dominance, so without this they would always
+  // ride; the point of a naked ATM option here is the quick 5–10 pt take,
+  // not holding unhedged theta/vega until the flow reverses.
   const dominance =
     result.bias === "Bullish" ? result.bullishOI / Math.max(1, result.bearishOI) :
     result.bias === "Bearish" ? result.bearishOI / Math.max(1, result.bullishOI) : 0;
   const exitMode =
+    legs.length === 1 ? "scalp" :
     result.bias === "Range" ? "default" :
     dominance >= OI_STRONG_RATIO ? "ride" : "scalp";
-  const { stopDist, targetDist } = exitLevels(netEntry, exitMode, legs.length === 1);
+  const { stopDist, targetDist, lockDist } = exitLevels(netEntry, exitMode, legs.length === 1);
   // reference target for gates that need a number in ride mode (no target)
   const refTarget = targetDist ?? stopDist * RISK_REWARD;
 
@@ -194,7 +213,7 @@ function buildTradePlan(result, chain) {
     }
   }
 
-  return { rec, legs, netEntry, stopDist, targetDist, exitMode, lots, estCharges: estCharges ?? 0, blocked };
+  return { rec, legs, netEntry, stopDist, targetDist, lockDist, exitMode, lots, estCharges: estCharges ?? 0, blocked };
 }
 
 // Open a paper position: store it in the in-memory state, record the
@@ -212,6 +231,7 @@ async function openPosition(result, plan) {
     netEntry: plan.netEntry,
     stopDist: plan.stopDist,
     targetDist: plan.targetDist, // null = ride mode (no fixed target)
+    lockDist: plan.lockDist ?? null, // scalp only: profit floor of the 5–10 band
     exitMode: plan.exitMode,     // ride | scalp | default — journaled for tuning
     estCharges: plan.estCharges, // Upstox round-trip estimate, deducted at close
     confidence: result.confidence,
@@ -256,6 +276,7 @@ async function openPosition(result, plan) {
     `🟢 PAPER ENTRY [${pos.horizon}] ${pos.strategy} ${legsSummary(pos.legs)} x${pos.lots} lot(s) @ net ` +
       `${pos.netEntry.toFixed(2)} | stop -${pos.stopDist.toFixed(2)} ` +
       `| ${pos.targetDist != null ? `target +${pos.targetDist.toFixed(2)}` : "RIDE (exit on signal reversal)"}` +
+      `${pos.lockDist != null ? ` (lock +${pos.lockDist.toFixed(0)})` : ""}` +
       ` | conf ${pos.confidence} | exp ${pos.expiry}`
   );
 }
