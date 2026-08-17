@@ -440,15 +440,23 @@ function analyze(chain, marketPcr) {
 
   const strategies = [
     // Naked legs carry a `naked` flag: the sort below hands them a TIED
-    // score only at 100 — i.e. only when every stricter check (deeper
-    // PCR, 2.5× OI dominance, build-up breadth, confirmed trend) fired.
-    // At sub-100 ties (e.g. PCR the lone dissenter on both sides) the
-    // defined-risk spread stays on top: a replay of 2026-08-13 showed a
-    // 75–75 tie putting a naked ATM call into a flow whipsaw for roughly
-    // twice the spread's loss.
+    // score only at 100 — i.e. only when every stricter check (2.5× OI
+    // dominance, build-up breadth, confirmed trend) fired. At sub-100
+    // ties the defined-risk spread stays on top: a replay of 2026-08-13
+    // showed a 75–75 tie putting a naked ATM call into a flow whipsaw for
+    // roughly twice the spread's loss.
+    //
+    // PCR is NOT a naked criterion (2026-08-14): local PCR over
+    // ATM±strikeRange sits 0.65–0.99 in this market every session, so the
+    // old `pcr > 1.15` gate capped Buy Call at 75 forever — the naked tier
+    // was FIRST in the list but could never reach the 100 it needs to
+    // lead. Same defect class as the removed PCR bias veto: PCR advises
+    // (it still earns confidence points), it doesn't veto.
     {
       // Naked long call — uncapped upside, full premium at risk, no short
-      // leg to offset theta/vega. High-conviction tier only.
+      // leg to offset theta/vega. High-conviction tier: leads the ranking
+      // whenever flow dominance, build-up breadth AND a confirmed trend
+      // all agree (score 100), exits as a 5–10 pt scalp (see trade.js).
       // The old avgCallDelta > 0.55 check could NEVER fire: the chain-mean
       // |delta| over a symmetric ATM±strikeRange window is pinned ≈ 0.5 by
       // construction (observed 0.459–0.519 on every recorded tick), which
@@ -456,13 +464,12 @@ function analyze(chain, marketPcr) {
       strategy: "Buy Call",
       naked: true,
       score: scoreOf([
-        [true, pcr > 1.15, 25],
-        [true, bullishOI > bearishOI * 2.5, 25],
-        [true, bullishCount > bearishCount * 2, 25],
+        [true, bullishOI > bearishOI * 2.5, 40],
+        [true, bullishCount > bearishCount * 2, 20],
         // HARD check ([true, ...]): while the trend is unknown it FAILS
         // instead of dropping out — no naked entries without a confirmed
         // trend (e.g. the first ~30 min before six 5-min candles exist).
-        [true, bias === "Bullish" && candleTrend === "Up", 25]
+        [true, bias === "Bullish" && candleTrend === "Up", 40]
       ])
     },
     {
@@ -470,10 +477,9 @@ function analyze(chain, marketPcr) {
       strategy: "Buy Put",
       naked: true,
       score: scoreOf([
-        [true, pcr < 0.85, 25],
-        [true, bearishOI > bullishOI * 2.5, 25],
-        [true, bearishCount > bullishCount * 2, 25],
-        [true, bias === "Bearish" && candleTrend === "Down", 25]
+        [true, bearishOI > bullishOI * 2.5, 40],
+        [true, bearishCount > bullishCount * 2, 20],
+        [true, bias === "Bearish" && candleTrend === "Down", 40]
       ])
     },
     {
