@@ -55,10 +55,15 @@ const HORIZONS = {
                                    // (AvgIV 260, AvgTheta 3839) — no exit rule
                                    // made that day profitable in replay
     exitBufferDays: 0,
-    signalPersistence: 3,          // one noisy poll must not exit a position:
+    signalPersistence: 2,          // one noisy poll must not exit a position:
                                    // at persistence 1 every trade in the first
                                    // 3 live days died by SIGNAL_CHANGE in 1–9
-                                   // min, with 0 STOP/TARGET exits ever
+                                   // min, with 0 STOP/TARGET exits ever.
+                                   // 3 → 2 on 2026-08-14: symmetric with
+                                   // RULES.entryBiasPersistence (2 in / 2 out)
+                                   // — at persistence 3 the wrong-way trade 4
+                                   // sat through a 2-poll reversal and rode
+                                   // its loss to the 15:21 square-off
     plannedHoldDays: 0             // theta gate off — decay is intraday noise
   },
 
