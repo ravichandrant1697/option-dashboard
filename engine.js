@@ -12,7 +12,7 @@ const { fetchMarketData } = require("./upstox-api");
 const { analyze, maybeRefreshCandleTrend } = require("./signals");
 const { buildTradePlan, openPosition, closePosition } = require("./trade");
 const { getNetPremium, checkExit } = require("./pricing");
-const { getState, rollStateIfNewDay, saveState, canOpen } = require("./state");
+const { getState, rollStateIfNewDay, saveState, canOpen, trackBiasStreak } = require("./state");
 const { appendRow, dashboardSheetName, toDashboardRow } = require("./workbook");
 const { maybeRefreshPortfolio, maybeRefreshPositions } = require("./portfolio");
 const { tuning, runTuning } = require("./tuning");
@@ -106,6 +106,14 @@ async function run() {
 
     runtime.setLastResult(result); // the stream exit sweep reuses this
 
+    // Roll the day BEFORE the plan is built: the same-legs and entry-
+    // persistence gates read state and must see TODAY's, not yesterday's
+    // (the first poll of a morning session used to compare same-legs
+    // against the PREVIOUS day's closedToday). Then count this poll
+    // toward the bias streak the persistence gate checks.
+    rollStateIfNewDay();
+    trackBiasStreak(result.bias);
+
     // ====================================================
     // TRADE PLAN
     // ====================================================
@@ -131,8 +139,6 @@ async function run() {
     // ====================================================
     // POSITION MANAGEMENT  (exits BEFORE any new entry)
     // ====================================================
-
-    rollStateIfNewDay();
 
     const state = getState();
 
