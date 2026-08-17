@@ -11,7 +11,10 @@ const { todayIST, nowIST } = require("./clock");
 // In-memory position state — the live loop reads and writes ONLY this
 // object; positions.json is touched once at startup (recovery) and is
 // write-only afterwards.
-let state = { date: todayIST(), open: [], closedToday: [] };
+// biasStreak = consecutive polls the CURRENT bias has held — the entry
+// persistence gate (RULES.entryBiasPersistence) reads it. Persisted, so
+// the 12:17 afternoon session continues the morning session's count.
+let state = { date: todayIST(), open: [], closedToday: [], biasStreak: { bias: null, count: 0 } };
 
 // Always fetch fresh — the object is REPLACED on day roll / recovery.
 function getState() {
@@ -32,12 +35,24 @@ function initState() {
 }
 
 // If the calendar day changed while running, keep open positions but
-// reset the daily risk counters (done in memory, no file read).
+// reset the daily risk counters (done in memory, no file read). The bias
+// streak resets too — yesterday's closing bias says nothing about today's
+// open, so the first entryBiasPersistence polls of a day re-confirm it.
 function rollStateIfNewDay() {
   const today = todayIST();
   if (state.date !== today) {
-    state = { date: today, open: state.open, closedToday: [] };
+    state = { date: today, open: state.open, closedToday: [], biasStreak: { bias: null, count: 0 } };
   }
+}
+
+// Count consecutive polls of the same bias — called by the engine exactly
+// once per analysis tick, BEFORE the trade plan is built. Older
+// positions.json files may lack biasStreak — default it in place.
+function trackBiasStreak(bias) {
+  const s = state.biasStreak ?? (state.biasStreak = { bias: null, count: 0 });
+  if (s.bias === bias) s.count++;
+  else { s.bias = bias; s.count = 1; }
+  return s.count;
 }
 
 // Persist the in-memory state so a restart mid-session loses nothing.
@@ -80,4 +95,4 @@ function canOpen() {
   return null;
 }
 
-module.exports = { getState, initState, rollStateIfNewDay, saveState, canOpen };
+module.exports = { getState, initState, rollStateIfNewDay, saveState, canOpen, trackBiasStreak };
