@@ -89,10 +89,32 @@
       "Confidence": 83,
       "EntryBias": "Bullish",
       "TrendAtEntry": "Up"
+    },
+    {
+      "PosId": 1786955585545,
+      "Timestamp": "2026-08-17 14:03:05",
+      "ExitTime": "2026-08-17 14:09:06",
+      "Horizon": "intraday",
+      "Expiry": "2026-08-18",
+      "Strategy": "Bull Call Spread",
+      "Legs": "BUY 24350CE | SELL 24400CE",
+      "Lots": 1,
+      "NetEntry": 26.4,
+      "NetExit": 26.1,
+      "Result": "LOSS",
+      "ExitReason": "SIGNAL_CHANGE",
+      "GrossPnL": -19.5,
+      "Charges": 109.88,
+      "PnL": -129.38,
+      "ExitMode": "ride",
+      "RR": "",
+      "Confidence": 83,
+      "EntryBias": "Bullish",
+      "TrendAtEntry": "Flat"
     }
   ],
   "biasStreak": {
-    "bias": "Bullish",
-    "count": 1
+    "bias": "Bearish",
+    "count": 2
   }
 }
