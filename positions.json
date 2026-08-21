@@ -1,6 +1,40 @@
 {
   "date": "2026-08-21",
-  "open": [],
+  "open": [
+    {
+      "id": 1787290718283,
+      "openedAt": "2026-08-21 11:08:38",
+      "openedAtMs": 1787290718284,
+      "strategy": "Bull Call Spread",
+      "legs": [
+        {
+          "strike": 24250,
+          "type": "CE",
+          "side": "BUY",
+          "instrument_key": "NSE_FO|61671"
+        },
+        {
+          "strike": 24300,
+          "type": "CE",
+          "side": "SELL",
+          "instrument_key": "NSE_FO|61685"
+        }
+      ],
+      "lots": 1,
+      "netEntry": 29.25,
+      "stopDist": 14.625,
+      "targetDist": null,
+      "lockDist": null,
+      "exitMode": "ride",
+      "estCharges": 119.1,
+      "confidence": 83,
+      "entryBias": "Bullish",
+      "trendAtEntry": "Flat",
+      "horizon": "intraday",
+      "product": "I",
+      "expiry": "2026-08-25"
+    }
+  ],
   "closedToday": [
     {
       "PosId": 1787284956244,
@@ -26,7 +60,7 @@
     }
   ],
   "biasStreak": {
-    "bias": "Bearish",
+    "bias": "Bullish",
     "count": 2
   }
 }
