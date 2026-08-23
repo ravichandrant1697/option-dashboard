@@ -14,17 +14,6 @@ function todayIST() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
 
-// Current IST wall-clock as "YYYY-MM-DD HH:mm:ss" — the ONLY format
-// written to the Excel sheets (Timestamp/ExitTime columns) and to logs.
-// UTC ISO strings made the journal look mis-scheduled ("03:45:38Z" is a
-// correct 09:15 IST market open). Sortable, and keeps the YYYY-MM-DD
-// prefix the backtester slices for day/month grouping. NOTE: strings in
-// this format parse as MACHINE-LOCAL time — compare them against
-// nowIST(), never against new Date()/Date.now().
-function istTimestamp() {
-  return new Date().toLocaleString("sv-SE", { timeZone: "Asia/Kolkata" });
-}
-
 // True during NSE cash/derivatives hours: Mon–Fri 09:15–15:30 IST.
 function isMarketOpen() {
   const d = nowIST();
@@ -59,13 +48,4 @@ function daysUntil(dateStr) {
   return Math.round(ms / 86400000);
 }
 
-module.exports = {
-  nowIST,
-  todayIST,
-  istTimestamp,
-  isMarketOpen,
-  isSquareOffTime,
-  pastIST,
-  daysUntil
-};
-//clock.js
+module.exports = { nowIST, todayIST, isMarketOpen, isSquareOffTime, pastIST, daysUntil };

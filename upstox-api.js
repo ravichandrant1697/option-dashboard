@@ -23,10 +23,6 @@ function authHeaders() {
   return { Authorization: `Bearer ${ACCESS_TOKEN}`, Accept: "application/json" };
 }
 
-
-// Preflight: one cheap authenticated call (user profile) proves the token
-
-
 // Wrap a flat live-chain side ({ltp, oi, volume} directly) into the rich
 // shape (market_data + option_greeks) the rest of the engine expects.
 // Rich sides pass through untouched.

@@ -7,12 +7,12 @@
  * EXITS: STOP | TARGET | SIGNAL_CHANGE (bias or top strategy no longer
  * matches the open position) | SQUARE_OFF (15:20 IST).
  */
-const { isMarketOpen, isSquareOffTime, pastIST, todayIST, istTimestamp } = require("./clock");
+const { isMarketOpen, isSquareOffTime, pastIST, todayIST } = require("./clock");
 const { fetchMarketData } = require("./upstox-api");
 const { analyze, maybeRefreshCandleTrend } = require("./signals");
 const { buildTradePlan, openPosition, closePosition } = require("./trade");
 const { getNetPremium, checkExit } = require("./pricing");
-const { getState, rollStateIfNewDay, saveState, canOpen, trackBiasStreak } = require("./state");
+const { getState, rollStateIfNewDay, saveState, canOpen } = require("./state");
 const { appendRow, dashboardSheetName, toDashboardRow } = require("./workbook");
 const { maybeRefreshPortfolio, maybeRefreshPositions } = require("./portfolio");
 const { tuning, runTuning } = require("./tuning");
@@ -21,7 +21,7 @@ const runtime = require("./runtime");
 
 async function run() {
   console.log("\n==================================================");
-  console.log("RUN START:", istTimestamp(), "IST"); // CI machines run UTC — log IST
+  console.log("RUN START:", new Date().toLocaleString());
   console.log("==================================================");
 
   try {
@@ -78,7 +78,6 @@ async function run() {
       return;
     }
 
-    
     if (!chain || !chain.length) {
       console.error("Empty option chain — skipping tick");
       return;
@@ -106,14 +105,6 @@ async function run() {
 
     runtime.setLastResult(result); // the stream exit sweep reuses this
 
-    // Roll the day BEFORE the plan is built: the same-legs and entry-
-    // persistence gates read state and must see TODAY's, not yesterday's
-    // (the first poll of a morning session used to compare same-legs
-    // against the PREVIOUS day's closedToday). Then count this poll
-    // toward the bias streak the persistence gate checks.
-    rollStateIfNewDay();
-    trackBiasStreak(result.bias);
-
     // ====================================================
     // TRADE PLAN
     // ====================================================
@@ -125,7 +116,7 @@ async function run() {
     console.log(
       "Trade Plan:",
       plan
-        ? `${plan.rec.strategy} | Lots=${plan.lots}${plan.blocked ? ` | ENTRY BLOCKED: ${plan.blocked}` : ""}`
+        ? `${plan.rec.strategy} | Lots=${plan.lots}`
         : "NO TRADE"
     );
 
@@ -139,6 +130,8 @@ async function run() {
     // ====================================================
     // POSITION MANAGEMENT  (exits BEFORE any new entry)
     // ====================================================
+
+    rollStateIfNewDay();
 
     const state = getState();
 
@@ -178,9 +171,7 @@ async function run() {
 
     // The 15:20 no-new-entries cutoff applies to the intraday horizon
     // only — positional/swing positions are MEANT to be held overnight.
-    // plan.blocked = signal logged but an execution gate (DTE/theta/
-    // same-legs/cost floor) refused the trade — see buildTradePlan.
-    if (plan && !plan.blocked && plan.lots >= 1 && (!getActiveHorizon().squareOff || !isSquareOffTime())) {
+    if (plan && plan.lots >= 1 && (!getActiveHorizon().squareOff || !isSquareOffTime())) {
 
       console.log("Checking entry conditions...");
 

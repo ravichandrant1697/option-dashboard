@@ -8,7 +8,7 @@
  * holding the import sees updates.
  */
 const fs = require("fs");
-const { TUNING_FILE, RULES, TUNING_REGIME_START } = require("./config");
+const { TUNING_FILE, RULES } = require("./config");
 const { todayIST } = require("./clock");
 const { SHEETS } = require("./workbook");
 
@@ -41,31 +41,16 @@ function loadTuning() {
 
 // Re-tune the strategy from completed trades. Deliberately conservative:
 //   1. Block a strategy only after ≥5 trades with negative expectancy.
-//   2. Set the confidence threshold to the band (70/80/90/100) with the
-//      BEST expectancy (≥5 trades in the band). Picking the lowest
-//      profitable band — the old rule — anchors on the weakest gate: on
-//      the first 11 live trades the ≥70 band earned ₹3/trade while ≥90
-//      earned ₹54/trade, and the old rule locked in 70.
+//   2. Set the confidence threshold to the lowest band (70/80/90) whose
+//      trades are profitable overall (≥5 trades in the band).
 //   3. Require candle-trend agreement only when ≥5 counter-trend trades
 //      lost money AND ≥5 with-trend trades made money.
 // With < 10 completed trades nothing changes. Writes tuning.json and
 // applies the result to the running engine immediately.
 function runTuning() {
-  // Regime filter: only trades executed under the CURRENT exit policy are
-  // evidence (see TUNING_REGIME_START). Timestamp is IST "YYYY-MM-DD ..."
-  // for new rows and UTC ISO for legacy ones — both start with the date.
-  const all = (SHEETS.Trades || []).filter(
+  const trades = (SHEETS.Trades || []).filter(
     t => t.Result === "WIN" || t.Result === "LOSS"
   );
-  const trades = all.filter(
-    t => String(t.Timestamp).slice(0, 10) >= TUNING_REGIME_START
-  );
-  if (all.length > trades.length) {
-    console.log(
-      `🔧 TUNE: ${all.length - trades.length} pre-regime trade(s) (before ` +
-        `${TUNING_REGIME_START}) excluded — old exit policy, not evidence`
-    );
-  }
   tuning.lastTuneDate = todayIST();
 
   if (trades.length < 10) {
@@ -84,15 +69,13 @@ function runTuning() {
     .filter(([, list]) => list.length >= 5 && expectancyOf(list) < 0)
     .map(([name]) => name);
 
-  // 2) Confidence threshold with the BEST expectancy (not the lowest
-  //    profitable one — see the header comment)
+  // 2) Lowest confidence threshold that is profitable overall
   let minConf = null;
-  let bestExp = 0; // must beat 0: an unprofitable band never becomes the gate
-  for (const lo of [70, 80, 90, 100]) {
+  for (const lo of [70, 80, 90]) {
     const subset = trades.filter(t => Number(t.Confidence) >= lo);
-    if (subset.length >= 5 && expectancyOf(subset) > bestExp) {
+    if (subset.length >= 5 && expectancyOf(subset) > 0) {
       minConf = lo;
-      bestExp = expectancyOf(subset);
+      break;
     }
   }
   if (minConf !== null) {

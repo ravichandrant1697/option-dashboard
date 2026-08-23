@@ -8,8 +8,6 @@
  *   #11 Bear Put Spread  = ATM Put Buy  + OTM Put Sell
  *   #21 Condor           = OTM sells hedged by outer OTM buys
  *   #2  Long Straddle    = ATM Call Buy + ATM Put Buy
- *   #1  Buy Call         = ATM Call Buy (naked, uncapped upside)
- *   #1  Buy Put          = ATM Put Buy  (naked, uncapped downside)
  */
 const { CONFIG } = require("./config");
 
@@ -40,18 +38,6 @@ function buildLongStraddle(atmStrike) {
   return { strategy: "Long Straddle", buy: atmStrike };
 }
 
-// Naked directional bet: buy ATM call only. Uncapped upside, premium at
-// risk, no short leg to offset theta decay.
-function buildBuyCall(atmStrike) {
-  return { strategy: "Buy Call", buy: atmStrike };
-}
-
-// Naked directional bet: buy ATM put only. Uncapped downside (to zero),
-// premium at risk, no short leg to offset theta decay.
-function buildBuyPut(atmStrike) {
-  return { strategy: "Buy Put", buy: atmStrike };
-}
-
 // Map the top-scored strategy name to its concrete builder.
 function recommend(topStrategy, atmStrike) {
   switch (topStrategy) {
@@ -59,8 +45,6 @@ function recommend(topStrategy, atmStrike) {
     case "Bear Put Spread":  return buildBearPutSpread(atmStrike);
     case "Iron Condor":      return buildIronCondor(atmStrike);
     case "Long Straddle":    return buildLongStraddle(atmStrike);
-    case "Buy Call":         return buildBuyCall(atmStrike);
-    case "Buy Put":          return buildBuyPut(atmStrike);
   }
   return null;
 }
@@ -91,14 +75,6 @@ function toLegs(rec) {
         { strike: rec.buy, type: "CE", side: "BUY" },
         { strike: rec.buy, type: "PE", side: "BUY" }
       ];
-    case "Buy Call":
-      return [
-        { strike: rec.buy, type: "CE", side: "BUY" }
-      ];
-    case "Buy Put":
-      return [
-        { strike: rec.buy, type: "PE", side: "BUY" }
-      ];
   }
   return [];
 }
@@ -108,8 +84,6 @@ module.exports = {
   buildBearPutSpread,
   buildIronCondor,
   buildLongStraddle,
-  buildBuyCall,
-  buildBuyPut,
   recommend,
   toLegs
 };

@@ -33,7 +33,7 @@
  *   backtest.js    metrics over collected trades
  *   prompts.js     interactive startup wizard (live mode)
  *
- * SETUP:  npm install axios xlsx dotenv    (ws optional, for streaming)
+ * SETUP:  npm install axios xlsx dotenv    (`ws` optional, for streaming)
  *
  * RUN:
  *   node option-dashboard.js             → asks NIFTY/Stock + strike diff,
@@ -57,7 +57,7 @@
  *   DEBUG_CHAIN=1  optional — dump the full option-chain JSON every tick
  *   DEBUG_SIGNALS=1 optional — per-strike build-up classification trace
  *   LIVE_TRADING=1 optional — enable REAL orders (also needs typed YES)
- *   UPSTOX_WS_URL  optional — JSON-relay stream URL (needs npm install ws)
+ *   UPSTOX_WS_URL  optional — JSON-relay stream URL (needs `npm install ws`)
  *   INSTRUMENT_KEY / EXPIRY_DATE / STRIKE_DIFF — headless config (tick mode)
  *   AUTO_EXIT=1    optional — live loop exits once the trading day ends
  *   SESSION_END    optional — "HH:MM" IST; session mode exits past this time
@@ -68,12 +68,7 @@
  * every runtime decision uses live API response data, never file contents.
  */
 const { CONFIG, applyEnvConfig } = require("./config");
-const { istTimestamp } = require("./clock");
 const { activateHorizon } = require("./horizons");
-const { validateToken } = require("./upstox-api");
-const { notify } = require("./notify");
-
-
 const { loadWorkbookCache } = require("./workbook");
 const { initState } = require("./state");
 const { loadTuning, runTuning } = require("./tuning");
@@ -87,7 +82,7 @@ const mode = (process.argv[2] || "").toLowerCase();
 console.log("======================================");
 console.log("Option Dashboard Started");
 console.log("Mode :", mode || "live");
-console.log("Time :", istTimestamp(), "IST"); // CI machines run UTC — log IST
+console.log("Time :", new Date().toLocaleString());
 console.log("======================================");
 
 if (mode === "backtest") {
@@ -106,8 +101,6 @@ if (mode === "backtest") {
     console.log("Loading ENV configuration...");
     applyEnvConfig();
     activateHorizon(process.env.HORIZON);
-
-    
 
     console.log("Loading workbook cache...");
     loadWorkbookCache();
@@ -143,7 +136,6 @@ if (mode === "backtest") {
     console.log("Loading ENV...");
     applyEnvConfig();
     activateHorizon(process.env.HORIZON);
-
 
     console.log("Loading workbook...");
     loadWorkbookCache();

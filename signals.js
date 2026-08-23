@@ -8,7 +8,6 @@
  *   candleTrend       written here, read everywhere via runtime
  */
 const { CONFIG } = require("./config");
-const { istTimestamp } = require("./clock");
 const { fetchCandles, fetchDailyCandles } = require("./upstox-api");
 const { getActiveHorizon } = require("./horizons");
 const runtime = require("./runtime");
@@ -327,18 +326,12 @@ function analyze(chain, marketPcr) {
   const hasGreeks = totalCallDelta + totalPutDelta > 0;
   const hasIV = totalIV > 0;
 
-  // Playbook bias: OI-weighted flow must DOMINATE (1.5×); unconvincing →
-  // Range. The old PCR veto (Bullish also needed pcr > 1) is gone: local
-  // PCR over ATM±strikeRange stayed 0.65–0.99 across four straight
-  // sessions — calls simply carry more OI in this market — so Bullish was
-  // structurally unreachable. On 2026-08-13 the 24319→24411 rally ran
-  // tick after tick with 10–40× bullish flow dominance while bias sat in
-  // Range/Bearish and the bot kept buying puts on an up day. PCR still
-  // earns or denies confidence points (pcrAgrees) and strategy-score
-  // points — it advises, it no longer vetoes.
+  // Playbook bias: OI-weighted bullish flow must DOMINATE (1.5×) AND the
+  // PCR must agree (PCR > 1 = put OI heavy = put sellers defending =
+  // support under the market). Mirror for Bearish; unconvincing → Range.
   let bias = "Range";
-  if (bullishOI > bearishOI * 1.5) bias = "Bullish";
-  else if (bearishOI > bullishOI * 1.5) bias = "Bearish";
+  if (bullishOI > bearishOI * 1.5 && pcr > 1) bias = "Bullish";
+  else if (bearishOI > bullishOI * 1.5 && pcr < 1) bias = "Bearish";
 
   // Signal log — one block per poll so every bias decision is auditable.
   const buildupSummary =
@@ -400,11 +393,7 @@ function analyze(chain, marketPcr) {
     ["OI dominance agrees with bias", true,                 oiDominanceAgrees,      20],
     ["Build-up count agrees",         true,                 countAgrees,            20],
     ["Directional |delta| > 0.4",     hasGreeks,            directionalDelta > 0.4, 20],
-    // Upper bound added: expiry-day feeds produced AvgIV up to 260 (with
-    // AvgTheta in the thousands) and the old "> 10" check happily awarded
-    // +20 confidence for it. IV that high isn't conviction, it's a broken
-    // or gamma-cliff reading — treat it as failing the check.
-    ["Avg IV sane (10–80)",           hasIV,                avgIV > 10 && avgIV < 80, 20],
+    ["Avg IV > 10",                   hasIV,                avgIV > 10,             20],
     ["Candle trend matches bias",     candleTrend !== null, trendMatches,           20]
   ];
 
@@ -439,49 +428,6 @@ function analyze(chain, marketPcr) {
   };
 
   const strategies = [
-    // Naked legs carry a `naked` flag: the sort below hands them a TIED
-    // score only at 100 — i.e. only when every stricter check (2.5× OI
-    // dominance, build-up breadth, confirmed trend) fired. At sub-100
-    // ties the defined-risk spread stays on top: a replay of 2026-08-13
-    // showed a 75–75 tie putting a naked ATM call into a flow whipsaw for
-    // roughly twice the spread's loss.
-    //
-    // PCR is NOT a naked criterion (2026-08-14): local PCR over
-    // ATM±strikeRange sits 0.65–0.99 in this market every session, so the
-    // old `pcr > 1.15` gate capped Buy Call at 75 forever — the naked tier
-    // was FIRST in the list but could never reach the 100 it needs to
-    // lead. Same defect class as the removed PCR bias veto: PCR advises
-    // (it still earns confidence points), it doesn't veto.
-    {
-      // Naked long call — uncapped upside, full premium at risk, no short
-      // leg to offset theta/vega. High-conviction tier: leads the ranking
-      // whenever flow dominance, build-up breadth AND a confirmed trend
-      // all agree (score 100), exits as a 5–10 pt scalp (see trade.js).
-      // The old avgCallDelta > 0.55 check could NEVER fire: the chain-mean
-      // |delta| over a symmetric ATM±strikeRange window is pinned ≈ 0.5 by
-      // construction (observed 0.459–0.519 on every recorded tick), which
-      // silently made naked legs unreachable.
-      strategy: "Buy Call",
-      naked: true,
-      score: scoreOf([
-        [true, bullishOI > bearishOI * 2.5, 40],
-        [true, bullishCount > bearishCount * 2, 20],
-        // HARD check ([true, ...]): while the trend is unknown it FAILS
-        // instead of dropping out — no naked entries without a confirmed
-        // trend (e.g. the first ~30 min before six 5-min candles exist).
-        [true, bias === "Bullish" && candleTrend === "Up", 40]
-      ])
-    },
-    {
-      // Naked long put — mirror of Buy Call for the bearish case.
-      strategy: "Buy Put",
-      naked: true,
-      score: scoreOf([
-        [true, bearishOI > bullishOI * 2.5, 40],
-        [true, bearishCount > bullishCount * 2, 20],
-        [true, bias === "Bearish" && candleTrend === "Down", 40]
-      ])
-    },
     {
       strategy: "Bull Call Spread",
       score: scoreOf([
@@ -520,14 +466,7 @@ function analyze(chain, marketPcr) {
     }
   ];
 
-  // Score first. On ties: naked legs win ONLY a 100-score tie (full
-  // conviction); every other tie keeps the defined-risk structure on top.
-  strategies.sort((a, b) =>
-    b.score - a.score ||
-    (a.score === 100
-      ? (b.naked ? 1 : 0) - (a.naked ? 1 : 0)
-      : (a.naked ? 1 : 0) - (b.naked ? 1 : 0))
-  );
+  strategies.sort((a, b) => b.score - a.score);
   const top3 = strategies.slice(0, 3);
 
   console.log(
@@ -536,7 +475,7 @@ function analyze(chain, marketPcr) {
   );
 
   return {
-    timestamp: istTimestamp(), // IST wall clock — what the sheets display
+    timestamp: new Date().toISOString(),
     spot,
     atmStrike,
     pcr,
