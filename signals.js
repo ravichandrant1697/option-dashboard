@@ -8,6 +8,7 @@
  *   candleTrend       written here, read everywhere via runtime
  */
 const { CONFIG } = require("./config");
+const { istTimestamp } = require("./clock");
 const { fetchCandles, fetchDailyCandles } = require("./upstox-api");
 const { getActiveHorizon } = require("./horizons");
 const runtime = require("./runtime");
@@ -88,12 +89,22 @@ function sma(closes, period) {
 }
 
 // Intraday trend: last six 5-minute closes (~30 min): > +0.1% Up,
-// < −0.1% Down, otherwise Flat.
+// < −0.1% Down, otherwise Flat. The SAME candle response also yields two
+// entry confirmations for free (no extra API call):
+//   VWAP         Σ(typical price × volume) / Σ(volume) over today — the
+//                day-anchor the alignment gate prefers over the first
+//                spot reading
+//   volumeSurge  max volume of the last two candles ÷ average of the rest
+//                (two, because the newest candle is usually still forming
+//                and would understate) — the volume-surge entry gate
 async function refreshIntradayTrend() {
   const candles = await fetchCandles(CONFIG.instrumentKey, "minutes", 5);
   if (candles.length < 6) {
     // fewer than six 5-min candles — e.g. the first ~30 min of the session
     runtime.setCandleTrend(null);
+    runtime.setVwap(null);
+    runtime.setVwapRef(null);
+    runtime.setVolumeSurge(null);
     return;
   }
   const recent = candles.slice(-6);
@@ -102,7 +113,49 @@ async function refreshIntradayTrend() {
   const pct = first ? ((last - first) / first) * 100 : 0;
   const trend = pct > 0.1 ? "Up" : pct < -0.1 ? "Down" : "Flat";
   runtime.setCandleTrend(trend);
-  console.log(`🕯️ CANDLE TREND (30m): ${trend} (${pct.toFixed(2)}%)`);
+
+  // Volume source: INDEX instruments trade no volume (their candles carry
+  // 0), so VWAP/volume fall back to the near-month FUTURES candles when
+  // the underlying's are volume-less and a futures key is known. vwapRef
+  // keeps the comparison basis-consistent: futures trade at a basis to
+  // spot, so a futures-sourced VWAP is compared against the FUTURES price
+  // (the same candles' last close), never against index spot. vwapRef
+  // null = VWAP is in underlying space, compare live spot as usual.
+  let volCandles = candles;
+  let vwapRef = null;
+  if (!candles.some(c => c.volume > 0) && CONFIG.futuresKey) {
+    try {
+      volCandles = await fetchCandles(CONFIG.futuresKey, "minutes", 5);
+      vwapRef = volCandles.length ? volCandles[volCandles.length - 1].close : null;
+    } catch (e) {
+      volCandles = [];
+      console.error("Futures candles failed — VWAP/volume gates inactive:", e.response?.status || e.message);
+    }
+  }
+
+  let pv = 0, vol = 0;
+  for (const c of volCandles) {
+    const typical = (c.high + c.low + c.close) / 3;
+    pv += typical * (c.volume || 0);
+    vol += c.volume || 0;
+  }
+  const vwap = vol > 0 ? Number((pv / vol).toFixed(2)) : null;
+  runtime.setVwap(vwap);
+  runtime.setVwapRef(vwap != null ? vwapRef : null);
+
+  let surge = null;
+  if (volCandles.length >= 6) {
+    const rest = volCandles.slice(0, -2);
+    const restAvg = rest.reduce((s, c) => s + (c.volume || 0), 0) / rest.length;
+    const lastVol = Math.max(...volCandles.slice(-2).map(c => c.volume || 0));
+    surge = restAvg > 0 ? Number((lastVol / restAvg).toFixed(2)) : null;
+  }
+  runtime.setVolumeSurge(surge);
+
+  console.log(
+    `🕯️ CANDLE TREND (30m): ${trend} (${pct.toFixed(2)}%) | VWAP ${vwap ?? "n/a"}` +
+      `${vwapRef != null ? ` (futures, ref ${vwapRef})` : ""} | vol surge ${surge ?? "n/a"}×`
+  );
 }
 
 // Daily SMA-crossover trend for positional/swing (playbook MA rule).
@@ -161,6 +214,41 @@ async function maybeRefreshCandleTrend() {
   console.log("Refreshing candle trend...");
   await refreshCandleTrend();
   console.log("Candle trend refreshed.");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * FUTURES BUILD-UP — the classic single-series confirmation. The near-
+ * month future has ONE price and ONE OI: poll-to-poll deltas classify as
+ *   ΔP↑ ΔOI↑  Long Buildup     → Bullish
+ *   ΔP↓ ΔOI↑  Short Buildup    → Bearish
+ *   ΔP↓ ΔOI↓  Long Unwinding   → Bearish
+ *   ΔP↑ ΔOI↓  Short Covering   → Bullish
+ * Far cleaner than the option chain's 20 noisy strike-level series — the
+ * entry gate blocks directional trades the futures flow CONTRADICTS.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+let prevFut = null; // { ltp, oi } of the previous poll's futures quote
+
+// Feed one futures quote row (from fetchQuotes) — updates the runtime
+// buildup the entry gate reads. First poll only seeds history; a missing
+// quote leaves the previous read in place (stale beats fabricated).
+function updateFuturesBuildup(quote) {
+  const ltp = quote?.last_price;
+  const oi = quote?.oi;
+  if (ltp == null || oi == null) return;
+
+  if (prevFut) {
+    const dP = ltp - prevFut.ltp;
+    const dOI = oi - prevFut.oi;
+    let label = "Neutral", direction = "Neutral";
+    if (dP > 0 && dOI > 0) { label = "Long Buildup"; direction = "Bullish"; }
+    else if (dP < 0 && dOI > 0) { label = "Short Buildup"; direction = "Bearish"; }
+    else if (dP < 0 && dOI < 0) { label = "Long Unwinding"; direction = "Bearish"; }
+    else if (dP > 0 && dOI < 0) { label = "Short Covering"; direction = "Bullish"; }
+    runtime.setFuturesBuildup({ label, direction });
+    console.log(`📈 FUTURES: ${label} (ΔP ${dP.toFixed(2)}, ΔOI ${dOI}) → ${direction}`);
+  }
+  prevFut = { ltp, oi };
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -326,12 +414,18 @@ function analyze(chain, marketPcr) {
   const hasGreeks = totalCallDelta + totalPutDelta > 0;
   const hasIV = totalIV > 0;
 
-  // Playbook bias: OI-weighted bullish flow must DOMINATE (1.5×) AND the
-  // PCR must agree (PCR > 1 = put OI heavy = put sellers defending =
-  // support under the market). Mirror for Bearish; unconvincing → Range.
+  // Playbook bias: OI-weighted flow must DOMINATE (1.5×); unconvincing →
+  // Range. The old PCR veto (Bullish also needed pcr > 1) is gone: local
+  // PCR over ATM±strikeRange stayed 0.65–0.99 across four straight
+  // sessions — calls simply carry more OI in this market — so Bullish was
+  // structurally unreachable. On 2026-08-13 the 24319→24411 rally ran
+  // tick after tick with 10–40× bullish flow dominance while bias sat in
+  // Range/Bearish and the bot kept buying puts on an up day. PCR still
+  // earns or denies confidence points (pcrAgrees) and strategy-score
+  // points — it advises, it no longer vetoes.
   let bias = "Range";
-  if (bullishOI > bearishOI * 1.5 && pcr > 1) bias = "Bullish";
-  else if (bearishOI > bullishOI * 1.5 && pcr < 1) bias = "Bearish";
+  if (bullishOI > bearishOI * 1.5) bias = "Bullish";
+  else if (bearishOI > bullishOI * 1.5) bias = "Bearish";
 
   // Signal log — one block per poll so every bias decision is auditable.
   const buildupSummary =
@@ -393,7 +487,11 @@ function analyze(chain, marketPcr) {
     ["OI dominance agrees with bias", true,                 oiDominanceAgrees,      20],
     ["Build-up count agrees",         true,                 countAgrees,            20],
     ["Directional |delta| > 0.4",     hasGreeks,            directionalDelta > 0.4, 20],
-    ["Avg IV > 10",                   hasIV,                avgIV > 10,             20],
+    // Upper bound added: expiry-day feeds produced AvgIV up to 260 (with
+    // AvgTheta in the thousands) and the old "> 10" check happily awarded
+    // +20 confidence for it. IV that high isn't conviction, it's a broken
+    // or gamma-cliff reading — treat it as failing the check.
+    ["Avg IV sane (10–80)",           hasIV,                avgIV > 10 && avgIV < 80, 20],
     ["Candle trend matches bias",     candleTrend !== null, trendMatches,           20]
   ];
 
@@ -428,6 +526,49 @@ function analyze(chain, marketPcr) {
   };
 
   const strategies = [
+    // Naked legs carry a `naked` flag: the sort below hands them a TIED
+    // score only at 100 — i.e. only when every stricter check (2.5× OI
+    // dominance, build-up breadth, confirmed trend) fired. At sub-100
+    // ties the defined-risk spread stays on top: a replay of 2026-08-13
+    // showed a 75–75 tie putting a naked ATM call into a flow whipsaw for
+    // roughly twice the spread's loss.
+    //
+    // PCR is NOT a naked criterion (2026-08-14): local PCR over
+    // ATM±strikeRange sits 0.65–0.99 in this market every session, so the
+    // old `pcr > 1.15` gate capped Buy Call at 75 forever — the naked tier
+    // was FIRST in the list but could never reach the 100 it needs to
+    // lead. Same defect class as the removed PCR bias veto: PCR advises
+    // (it still earns confidence points), it doesn't veto.
+    {
+      // Naked long call — uncapped upside, full premium at risk, no short
+      // leg to offset theta/vega. High-conviction tier: leads the ranking
+      // whenever flow dominance, build-up breadth AND a confirmed trend
+      // all agree (score 100), exits as a 5–10 pt scalp (see trade.js).
+      // The old avgCallDelta > 0.55 check could NEVER fire: the chain-mean
+      // |delta| over a symmetric ATM±strikeRange window is pinned ≈ 0.5 by
+      // construction (observed 0.459–0.519 on every recorded tick), which
+      // silently made naked legs unreachable.
+      strategy: "Buy Call",
+      naked: true,
+      score: scoreOf([
+        [true, bullishOI > bearishOI * 2.5, 40],
+        [true, bullishCount > bearishCount * 2, 20],
+        // HARD check ([true, ...]): while the trend is unknown it FAILS
+        // instead of dropping out — no naked entries without a confirmed
+        // trend (e.g. the first ~30 min before six 5-min candles exist).
+        [true, bias === "Bullish" && candleTrend === "Up", 40]
+      ])
+    },
+    {
+      // Naked long put — mirror of Buy Call for the bearish case.
+      strategy: "Buy Put",
+      naked: true,
+      score: scoreOf([
+        [true, bearishOI > bullishOI * 2.5, 40],
+        [true, bearishCount > bullishCount * 2, 20],
+        [true, bias === "Bearish" && candleTrend === "Down", 40]
+      ])
+    },
     {
       strategy: "Bull Call Spread",
       score: scoreOf([
@@ -466,7 +607,14 @@ function analyze(chain, marketPcr) {
     }
   ];
 
-  strategies.sort((a, b) => b.score - a.score);
+  // Score first. On ties: naked legs win ONLY a 100-score tie (full
+  // conviction); every other tie keeps the defined-risk structure on top.
+  strategies.sort((a, b) =>
+    b.score - a.score ||
+    (a.score === 100
+      ? (b.naked ? 1 : 0) - (a.naked ? 1 : 0)
+      : (a.naked ? 1 : 0) - (b.naked ? 1 : 0))
+  );
   const top3 = strategies.slice(0, 3);
 
   console.log(
@@ -475,9 +623,15 @@ function analyze(chain, marketPcr) {
   );
 
   return {
-    timestamp: new Date().toISOString(),
+    timestamp: istTimestamp(), // IST wall clock — what the sheets display
     spot,
     atmStrike,
+    // Confirmation snapshots (journaled per poll so replays can validate
+    // the gates): today's VWAP, latest volume-surge ratio, and the futures
+    // build-up label. The engine refreshes futures BEFORE analyze().
+    vwap: runtime.getVwap(),
+    volumeSurge: runtime.getVolumeSurge(),
+    futuresBuildup: runtime.getFuturesBuildup()?.label ?? "",
     pcr,
     S1: topPuts[0]?.strike_price,
     S2: topPuts[1]?.strike_price,
@@ -513,5 +667,6 @@ module.exports = {
   getATMStrike,
   refreshCandleTrend,
   maybeRefreshCandleTrend,
+  updateFuturesBuildup,
   analyze
 };

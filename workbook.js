@@ -18,8 +18,10 @@ function dashboardSheetName() {
 }
 
 // One-time startup read of ALL existing workbook sheets into the memory
-// cache — including previous days' date sheets, so a flush never drops
-// them. Never called on the hot path.
+// cache — including previous days' date sheets AND today's sheet when an
+// earlier session already wrote it (the 12:30 IST second session appends
+// below the morning rows instead of restarting the sheet). A flush never
+// drops other sheets. Never called on the hot path.
 function loadWorkbookCache() {
   if (!fs.existsSync(FILE_NAME)) return;
   const workbook = XLSX.readFile(FILE_NAME);
@@ -48,8 +50,10 @@ function appendRow(sheetName, row) {
 }
 
 // Flatten one analysis tick (+ optional trade plan) into a Dashboard row —
-// all analysis columns plus the recommendation columns when a plan passed
-// the filters. NO TRADE rows carry the analysis only.
+// all analysis columns plus the recommendation columns whenever a signal
+// was priced (expiry day included). Blocked notes WHY an execution gate
+// refused the entry ("" = traded/tradeable). NO TRADE rows carry the
+// analysis only.
 function toDashboardRow(result, plan) {
   const base = {
     Timestamp: result.timestamp,
@@ -71,6 +75,9 @@ function toDashboardRow(result, plan) {
     AvgGamma: result.avgGamma,
     AvgVega: result.avgVega,
     CandleTrend: result.candleTrend ?? "",
+    VWAP: result.vwap ?? "",
+    VolSurge: result.volumeSurge ?? "",
+    FutBuildup: result.futuresBuildup ?? "",
     Confidence: result.confidence,
     Strategy1: result.strategy1,
     Strategy1Score: result.strategy1Score,
@@ -83,6 +90,9 @@ function toDashboardRow(result, plan) {
 
   if (!plan) return { ...base, Strategy: "NO TRADE" };
 
+  // ride mode (strong OI): targetDist is null — no fixed target, the
+  // signal reversal takes the profit, so Target/Reward/RR show the mode.
+  const ride = plan.targetDist == null;
   return {
     ...base,
     Strategy: plan.rec.strategy,
@@ -90,11 +100,13 @@ function toDashboardRow(result, plan) {
     Lots: plan.lots,
     EntryPrice: Number(plan.netEntry.toFixed(2)),
     StopLoss: Number((plan.netEntry - plan.stopDist).toFixed(2)),
-    Target: Number((plan.netEntry + plan.targetDist).toFixed(2)),
+    Target: ride ? "SIGNAL" : Number((plan.netEntry + plan.targetDist).toFixed(2)),
     Risk: Number((plan.stopDist * LOT_SIZE * plan.lots).toFixed(0)),
-    Reward: Number((plan.targetDist * LOT_SIZE * plan.lots).toFixed(0)),
+    Reward: ride ? "" : Number((plan.targetDist * LOT_SIZE * plan.lots).toFixed(0)),
     RiskRewardRatio:
-      plan.stopDist > 0 ? Number((plan.targetDist / plan.stopDist).toFixed(2)) : 0
+      !ride && plan.stopDist > 0 ? Number((plan.targetDist / plan.stopDist).toFixed(2)) : "",
+    ExitMode: plan.exitMode ?? "",
+    Blocked: plan.blocked || ""
   };
 }
 

@@ -7,21 +7,22 @@
  * EXITS: STOP | TARGET | SIGNAL_CHANGE (bias or top strategy no longer
  * matches the open position) | SQUARE_OFF (15:20 IST).
  */
-const { isMarketOpen, isSquareOffTime, pastIST, todayIST } = require("./clock");
-const { fetchMarketData } = require("./upstox-api");
-const { analyze, maybeRefreshCandleTrend } = require("./signals");
+const { isMarketOpen, isSquareOffTime, pastIST, todayIST, istTimestamp } = require("./clock");
+const { fetchMarketData, fetchQuotes } = require("./upstox-api");
+const { analyze, maybeRefreshCandleTrend, updateFuturesBuildup } = require("./signals");
 const { buildTradePlan, openPosition, closePosition } = require("./trade");
 const { getNetPremium, checkExit } = require("./pricing");
-const { getState, rollStateIfNewDay, saveState, canOpen } = require("./state");
+const { getState, rollStateIfNewDay, saveState, canOpen, trackBiasStreak, trackDayOpen } = require("./state");
 const { appendRow, dashboardSheetName, toDashboardRow } = require("./workbook");
 const { maybeRefreshPortfolio, maybeRefreshPositions } = require("./portfolio");
 const { tuning, runTuning } = require("./tuning");
 const { getActiveHorizon } = require("./horizons");
+const { CONFIG } = require("./config");
 const runtime = require("./runtime");
 
 async function run() {
   console.log("\n==================================================");
-  console.log("RUN START:", new Date().toLocaleString());
+  console.log("RUN START:", istTimestamp(), "IST"); // CI machines run UTC — log IST
   console.log("==================================================");
 
   try {
@@ -78,6 +79,7 @@ async function run() {
       return;
     }
 
+    
     if (!chain || !chain.length) {
       console.error("Empty option chain — skipping tick");
       return;
@@ -89,6 +91,21 @@ async function run() {
 
     console.log("Checking candle refresh...");
     await maybeRefreshCandleTrend();
+
+    // ====================================================
+    // FUTURES BUILD-UP  (confirmation gate input — before
+    // analyze() so the poll's snapshot includes it)
+    // ====================================================
+
+    if (CONFIG.futuresKey) {
+      try {
+        const quotes = await fetchQuotes([CONFIG.futuresKey]);
+        updateFuturesBuildup(quotes.get(CONFIG.futuresKey));
+      } catch (e) {
+        // keep the previous read — a dropped quote must not fabricate one
+        console.error("Futures quote failed:", e.response?.status || e.message);
+      }
+    }
 
     // ====================================================
     // ANALYSIS
@@ -105,18 +122,28 @@ async function run() {
 
     runtime.setLastResult(result); // the stream exit sweep reuses this
 
+    // Roll the day BEFORE the plan is built: the same-legs and entry-
+    // persistence gates read state and must see TODAY's, not yesterday's
+    // (the first poll of a morning session used to compare same-legs
+    // against the PREVIOUS day's closedToday). Then count this poll
+    // toward the bias streak the persistence gate checks, and anchor the
+    // day-open spot the alignment gate compares entries against.
+    rollStateIfNewDay();
+    trackBiasStreak(result.bias);
+    trackDayOpen(result.spot);
+
     // ====================================================
     // TRADE PLAN
     // ====================================================
 
     console.log("Building trade plan...");
 
-    const plan = buildTradePlan(result, chain);
+    const plan = await buildTradePlan(result, chain);
 
     console.log(
       "Trade Plan:",
       plan
-        ? `${plan.rec.strategy} | Lots=${plan.lots}`
+        ? `${plan.rec.strategy} | Lots=${plan.lots}${plan.blocked ? ` | ENTRY BLOCKED: ${plan.blocked}` : ""}`
         : "NO TRADE"
     );
 
@@ -130,8 +157,6 @@ async function run() {
     // ====================================================
     // POSITION MANAGEMENT  (exits BEFORE any new entry)
     // ====================================================
-
-    rollStateIfNewDay();
 
     const state = getState();
 
@@ -171,7 +196,9 @@ async function run() {
 
     // The 15:20 no-new-entries cutoff applies to the intraday horizon
     // only — positional/swing positions are MEANT to be held overnight.
-    if (plan && plan.lots >= 1 && (!getActiveHorizon().squareOff || !isSquareOffTime())) {
+    // plan.blocked = signal logged but an execution gate (DTE/theta/
+    // same-legs/cost floor) refused the trade — see buildTradePlan.
+    if (plan && !plan.blocked && plan.lots >= 1 && (!getActiveHorizon().squareOff || !isSquareOffTime())) {
 
       console.log("Checking entry conditions...");
 
@@ -234,4 +261,58 @@ async function run() {
   console.log("==================================================");
 }
 
-module.exports = { run };
+
+// FAST EXIT CHECK — the between-poll exit guard. ENTRIES need the whole
+// chain and fresh OI (Upstox refreshes those on a 3-min cadence, so
+// polling faster just re-reads stale OI), but EXITS only need the legs'
+// prices: one quote call, and only while a position is actually open.
+//
+// This is what makes STOP / TARGET / PROFIT_LOCK behave as designed. With
+// 3-minute vision a scalp can spike past its lock and round-trip back
+// inside a single poll gap, unseen — the first 36 journal trades contain
+// zero PROFIT_LOCK exits and exactly one TARGET.
+//
+// The signal-change branch reuses the LAST poll's analysis: checkExit
+// counts a miss once per result.timestamp, so repeated fast checks
+// against the same analysis cannot inflate the streak. closingIds guards
+// the poll/fast-check race the same way it guards the stream sweep.
+async function fastExitCheck() {
+  const state = getState();
+  if (!state.open.length) return;                 // nothing to guard
+  if (!isMarketOpen() && !process.env.FORCE_RUN) return;
+  const lastResult = runtime.getLastResult();
+  if (!lastResult) return;                        // no analysis yet this session
+
+  for (const pos of [...state.open]) {
+    if (runtime.closingIds.has(pos.id)) continue;
+
+    const keys = pos.legs.map(l => l.instrument_key).filter(Boolean);
+    if (keys.length !== pos.legs.length) continue; // unpriceable — the poll handles it
+
+    let quotes;
+    try {
+      quotes = await fetchQuotes(keys);
+    } catch (e) {
+      console.error("Fast exit check — quote failed:", e.response?.status || e.message);
+      return;                                      // retry on the next tick
+    }
+
+    let netNow = 0;
+    let complete = true;
+    for (const leg of pos.legs) {
+      const ltp = quotes.get(leg.instrument_key)?.last_price;
+      if (ltp == null) { complete = false; break; }
+      netNow += leg.side === "BUY" ? ltp : -ltp;
+    }
+    if (!complete) continue;
+
+    const exit = checkExit(pos, netNow, lastResult);
+    if (exit) {
+      console.log(`⚡ FAST EXIT -> ${exit.reason} | ${exit.outcome} | net ${netNow.toFixed(2)}`);
+      await closePosition(pos, netNow, exit.outcome, exit.reason);
+      saveState();
+    }
+  }
+}
+
+module.exports = { run, fastExitCheck };

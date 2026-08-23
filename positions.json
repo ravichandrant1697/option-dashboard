@@ -1,5 +1,9 @@
 {
-  "date": "2026-08-06",
+  "date": "2026-08-20",
   "open": [],
-  "closedToday": []
+  "closedToday": [],
+  "biasStreak": {
+    "bias": "Bearish",
+    "count": 1
+  }
 }

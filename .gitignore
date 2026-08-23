@@ -2,5 +2,3 @@ node_modules/
 .env
 start_daily.bat
 trading.log
-docs/
-tests/

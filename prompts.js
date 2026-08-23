@@ -7,6 +7,15 @@ const { CONFIG, LOT_SIZE, RISK_REWARD } = require("./config");
 const { activateHorizon } = require("./horizons");
 const runtime = require("./runtime");
 
+// Enhancement module — a deploy that misses instruments.js must not crash
+// the wizard; the expiry prompt then just shows the configured default.
+let autoResolveContracts = async () => {};
+try {
+  ({ autoResolveContracts } = require("./instruments"));
+} catch {
+  console.warn("⚠️ instruments.js not found — expiry/futures auto-resolution disabled");
+}
+
 // Ask one question on the terminal and resolve with the trimmed answer.
 function ask(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -41,6 +50,12 @@ async function setupInstrument() {
     const key = await ask("Upstox instrument key of the stock (e.g. NSE_EQ|INE002A01018): ");
     if (key) CONFIG.instrumentKey = key;
   }
+
+  // Auto-resolve the chosen underlying's contracts BEFORE the expiry
+  // prompt, so the default the prompt shows IS the nearest live expiry
+  // (typing a date still overrides it). Also fills CONFIG.futuresKey for
+  // the futures-buildup gate.
+  await autoResolveContracts();
 
   // Expiry date — NIFTY has weekly expiries, stocks are monthly.
   while (true) {

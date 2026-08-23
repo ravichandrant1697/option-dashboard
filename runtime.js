@@ -5,6 +5,12 @@
  * otherwise be circular dependencies (engine ↔ stream ↔ trade).
  *
  *   candleTrend  written by signals.refreshCandleTrend  ("Up"|"Down"|"Flat"|null)
+ *   vwap         written by signals.refreshIntradayTrend (today's VWAP | null)
+ *   vwapRef      written by signals.refreshIntradayTrend — the price to compare
+ *                against vwap when it was computed from FUTURES candles (indices
+ *                trade no volume); null = compare live spot (underlying-space VWAP)
+ *   volumeSurge  written by signals.refreshIntradayTrend (latest/avg 5-min volume | null)
+ *   futuresBuildup written by signals.updateFuturesBuildup ({label, direction} | null)
  *   lastResult   written by engine.run every poll        (latest analyze() output)
  *   liveTicks    written by stream on websocket messages (key → {ltp, cp, greeks, at})
  *   closingIds   claimed by trade.closePosition           (double-close guard)
@@ -12,6 +18,10 @@
  */
 
 let candleTrend = null;
+let vwap = null;
+let vwapRef = null;
+let volumeSurge = null;
+let futuresBuildup = null;
 let lastResult = null;
 let liveTrading = false;
 
@@ -25,6 +35,14 @@ const closingIds = new Set();
 module.exports = {
   getCandleTrend: () => candleTrend,
   setCandleTrend: v => { candleTrend = v; },
+  getVwap: () => vwap,
+  setVwap: v => { vwap = v; },
+  getVwapRef: () => vwapRef,
+  setVwapRef: v => { vwapRef = v; },
+  getVolumeSurge: () => volumeSurge,
+  setVolumeSurge: v => { volumeSurge = v; },
+  getFuturesBuildup: () => futuresBuildup,
+  setFuturesBuildup: v => { futuresBuildup = v; },
   getLastResult: () => lastResult,
   setLastResult: v => { lastResult = v; },
   isLiveTrading: () => liveTrading,

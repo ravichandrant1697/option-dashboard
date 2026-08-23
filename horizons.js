@@ -44,14 +44,32 @@ const HORIZONS = {
   intraday: {
     name: "intraday",
     product: "I",
-    pollMs: 60000,                 // 60s — exits are minutes away
+    pollMs: 180000,                 // 60s — exits are minutes away
     trend: { source: "intraday" }, // last six 5-min candles (~30 min)
     trendRefreshMs: 5 * 60000,
     squareOff: true,
     maxHoldDays: null,             // the square-off IS the time stop
-    minEntryDTE: 0,
+    minEntryDTE: 1,                // no expiry-day entries: on 2026-08-11 (DTE 0)
+                                   // the bias signal was a coin flip (41–55%
+                                   // accurate) while IV/theta readings blew up
+                                   // (AvgIV 260, AvgTheta 3839) — no exit rule
+                                   // made that day profitable in replay
     exitBufferDays: 0,
-    signalPersistence: 1,          // first mismatching poll exits (as before)
+    signalPersistence: 4,          // one noisy poll must not exit a position:
+                                   // at persistence 1 every trade in the first
+                                   // 3 live days died by SIGNAL_CHANGE in 1–9
+                                   // min, with 0 STOP/TARGET exits ever.
+                                   // 2 → 4 on 2026-08-20 (stock retune): the
+                                   // SBIN bias flips on 59% of polls and its
+                                   // measured edge only shows at ~60-min
+                                   // holds — at persistence 2 the median hold
+                                   // was ~6 min and 33/34 exits were
+                                   // SIGNAL_CHANGE whipsaws. Replaying the
+                                   // Aug 18–20 sheets: exits at 3/4/5 netted
+                                   // −1096/−648/−440; 4 picked as the
+                                   // middle, not the best-fitting, value.
+                                   // The premium-relative stop still guards
+                                   // the downside while the position waits.
     plannedHoldDays: 0             // theta gate off — decay is intraday noise
   },
 
