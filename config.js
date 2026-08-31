@@ -18,7 +18,7 @@ const TUNING_FILE = "tuning.json";           // self-tuned parameters, written d
 // prompts (NIFTY or Stock, and the gap between strikes for spreads).
 const CONFIG = {
   instrumentKey: "NSE_INDEX|Nifty 50",
-  expiryDate: "2026-08-25", // auto-resolved at startup from the instruments
+  expiryDate: "2026-09-01", // auto-resolved at startup from the instruments
                             // master (nearest WEEKLY expiry for NIFTY, rolls
                             // on expiry day); EXPIRY_DATE env or the live-mode
                             // prompt pins it
