@@ -368,12 +368,35 @@ async function openPosition(result, plan) {
   // Live mode: fire the real entry orders (paper journal runs regardless)
   await executeLegs(pos, true);
 
+  // Telegram entry signal — labeled multi-line format. Levels are NET-
+  // PREMIUM prices (same convention as the sheet): stop = netEntry −
+  // stopDist, target = netEntry + targetDist; ride mode has no target —
+  // a signal reversal is its exit.
+  const stopLevel = (pos.netEntry - pos.stopDist).toFixed(2);
+  const exitPlan =
+    (pos.targetDist != null
+      ? `Target @ ${(pos.netEntry + pos.targetDist).toFixed(2)}`
+      : "Signal reversal (ride)") +
+    ` / Stop @ ${stopLevel}` +
+    (pos.lockDist != null ? ` / Lock @ ${(pos.netEntry + pos.lockDist).toFixed(2)}` : "");
   await notify(
-    `🟢 PAPER ENTRY [${pos.horizon}] ${pos.strategy} ${legsSummary(pos.legs)} x${pos.lots} lot(s) @ net ` +
-      `${pos.netEntry.toFixed(2)} | stop -${pos.stopDist.toFixed(2)} ` +
-      `| ${pos.targetDist != null ? `target +${pos.targetDist.toFixed(2)}` : "RIDE (exit on signal reversal)"}` +
-      `${pos.lockDist != null ? ` (lock +${pos.lockDist.toFixed(0)})` : ""}` +
-      ` | conf ${pos.confidence} | exp ${pos.expiry}`
+    `🟢 PAPER ENTRY [${pos.horizon}]
+` +
+      `StrategyName : ${pos.strategy}
+` +
+      `Strike : ${legsSummary(pos.legs)}
+` +
+      `Lot : ${pos.lots}
+` +
+      `Premium ${pos.netEntry < 0 ? "Sell" : "Buy"} @ : ${Math.abs(pos.netEntry).toFixed(2)}${pos.netEntry < 0 ? " (credit)" : ""}
+` +
+      `Stop Loss @ : ${stopLevel}
+` +
+      `Reason on Exit : ${exitPlan}
+` +
+      `Confidence : ${pos.confidence}
+` +
+      `Expiry : ${pos.expiry}`
   );
 }
 
@@ -390,6 +413,11 @@ async function closePosition(pos, netNow, outcome, reason) {
   // what actually lands in the account, not the gross premium move.
   const gross = (netNow - pos.netEntry) * qty;
   const chargesRs = pos.estCharges ?? 0;
+  // Result is decided on the FINAL net rupee outcome (gross − charges),
+  // never the trigger-time read: the tuner, the losing-streak breaker and
+  // the win-rate stats all learn from this label, and a "+₹62 gross /
+  // −₹50 net" close must journal as LOSS.
+  outcome = gross - chargesRs >= 0 ? "WIN" : "LOSS";
   const trade = {
     PosId: pos.id,
     Timestamp: pos.openedAt,

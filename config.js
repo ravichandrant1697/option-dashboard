@@ -79,7 +79,7 @@ const SCALP_LOCK_PCT = 0.1;    // profit floor once seen = 10% of |net entry|
 // score-100 trigger — flip to true to block them structurally again.
 // Config-level (not tuning.json) because the tuner recomputes its
 // blocklist from post-regime data and would silently forget the block.
-const BLOCK_NAKED_LEGS = false;
+const BLOCK_NAKED_LEGS = true;
 
 // Upstox NSE-options charge model (per executed ORDER — each leg is one
 // order, entry and exit are separate orders). Rates as of Oct 2024 revision.

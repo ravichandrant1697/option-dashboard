@@ -118,7 +118,7 @@ function checkExit(pos, netNow, result) {
   // ride-mode positions have targetDist null — no fixed target, the
   // SIGNAL_CHANGE reversal below is their take-profit
   if (pos.targetDist != null && move >= pos.targetDist)
-    return { outcome: "WIN", reason: "TARGET" };
+    return { outcome: netWin ? "WIN" : "LOSS", reason: "TARGET" };
 
   // PROFIT_LOCK (scalp's premium-band floor): once the move has traded
   // ABOVE lockDist, a pullback to/below it banks the win — a scalp that

@@ -77,6 +77,15 @@ const { run } = require("./engine");
 const { runBacktest } = require("./backtest");
 const { setupInstrument } = require("./prompts");
 
+// Guarded like prompts.js — a deploy that misses instruments.js must not
+// crash the headless modes; the engine then just keeps configured values.
+let autoResolveContracts = async () => {};
+try {
+  ({ autoResolveContracts } = require("./instruments"));
+} catch {
+  console.warn("⚠️ instruments.js not found — expiry/futures auto-resolution disabled");
+}
+
 const mode = (process.argv[2] || "").toLowerCase();
 
 console.log("======================================");
@@ -101,6 +110,13 @@ if (mode === "backtest") {
     console.log("Loading ENV configuration...");
     applyEnvConfig();
     activateHorizon(process.env.HORIZON);
+
+    // Roll expiry to the nearest contract and resolve the near-month
+    // futures key (feeds the futures-buildup + VWAP/volume gates). Session
+    // mode previously skipped this — the wizard-only call left futuresKey
+    // empty and the expiry stale in CI, so the gates never fired.
+    console.log("Resolving contracts (expiry / futures key)...");
+    await autoResolveContracts();
 
     console.log("Loading workbook cache...");
     loadWorkbookCache();
@@ -136,6 +152,10 @@ if (mode === "backtest") {
     console.log("Loading ENV...");
     applyEnvConfig();
     activateHorizon(process.env.HORIZON);
+
+    // Same contract resolution as session mode — see the comment there.
+    console.log("Resolving contracts (expiry / futures key)...");
+    await autoResolveContracts();
 
     console.log("Loading workbook...");
     loadWorkbookCache();
