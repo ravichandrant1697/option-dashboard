@@ -3,8 +3,18 @@ name: Option Dashboard Trading Session
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 3 * * *"
-    - cron: "47 6 * * *"
+    # GitHub cron is UTC and BEST-EFFORT — triggers fire 15-60+ min late or
+    # get DROPPED entirely under load (observed: mornings first polling at
+    # 12:29 / 12:56 IST, afternoon halves never firing on Aug 12/13/28).
+    # Redundant staggered triggers give several chances per half; the run
+    # step's gates (wait-for-09:15, exit-past-close, IST-based session
+    # halves) plus the concurrency group make duplicates safe and
+    # self-terminating, so extra firings cost nothing.
+    - cron: "25 3 * * 1-5"   # 08:55 IST — morning primary; engine gated to 09:15
+    - cron: "45 3 * * 1-5"   # 09:15 IST — morning backup if primary dropped
+    - cron: "5 4 * * 1-5"    # 09:35 IST — morning last resort
+    - cron: "47 6 * * 1-5"   # 12:17 IST — afternoon relay (queues behind morning)
+    - cron: "15 7 * * 1-5"   # 12:45 IST — afternoon backup
 
 permissions:
   contents: write
@@ -117,15 +127,31 @@ jobs:
 
           echo "option_dashboard.js FOUND"
 
-          CURRENT_UTC_HOUR=$(date -u +%H)
+          CURRENT_IST=$(TZ=Asia/Kolkata date +%H:%M)
 
-          if [ "$CURRENT_UTC_HOUR" -lt 6 ]; then
+          # Past market close — a redundant/queued trigger with nothing
+          # left to do. Exit cleanly instead of burning runner minutes.
+          if [[ "$CURRENT_IST" > "15:29" ]]; then
+            echo "Market closed ($CURRENT_IST IST) — nothing to do"
+            exit 0
+          fi
+
+          # Session halves by IST wall clock (not UTC hour), so a queued
+          # duplicate that starts at 12:36 correctly becomes the afternoon
+          # session instead of re-running the morning one.
+          if [[ "$CURRENT_IST" < "12:17" ]]; then
             export SESSION_END="12:35"
           else
             export SESSION_END="15:35"
           fi
 
           echo "Session until $SESSION_END IST"
+
+          # Reliable 09:15 start: early triggers idle here until open.
+          while [[ "$(TZ=Asia/Kolkata date +%H:%M)" < "09:15" ]]; do
+            echo "Waiting for 09:15 IST open (now $(TZ=Asia/Kolkata date +%H:%M))..."
+            sleep 60
+          done
 
           git config user.name "trading-bot"
           git config user.email "trading-bot@users.noreply.github.com"
