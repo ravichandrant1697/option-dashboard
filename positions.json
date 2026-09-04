@@ -1,9 +1,45 @@
 {
   "date": "2026-09-04",
-  "open": [],
+  "open": [
+    {
+      "id": 1788494642333,
+      "openedAt": "2026-09-04 09:34:02",
+      "openedAtMs": 1788494642333,
+      "strategy": "Bear Put Spread",
+      "legs": [
+        {
+          "strike": 23900,
+          "type": "PE",
+          "side": "BUY",
+          "instrument_key": "NSE_FO|42636"
+        },
+        {
+          "strike": 23850,
+          "type": "PE",
+          "side": "SELL",
+          "instrument_key": "NSE_FO|42634"
+        }
+      ],
+      "lots": 1,
+      "netEntry": 18.500000000000007,
+      "stopDist": 9.250000000000004,
+      "targetDist": null,
+      "lockDist": null,
+      "exitMode": "ride",
+      "estCharges": 111.7,
+      "confidence": 100,
+      "entryBias": "Bearish",
+      "trendAtEntry": null,
+      "horizon": "intraday",
+      "product": "I",
+      "expiry": "2026-09-08",
+      "_signalMiss": 1,
+      "_lastMissTs": "2026-09-04 09:39:42"
+    }
+  ],
   "closedToday": [],
   "biasStreak": {
-    "bias": "Bearish",
+    "bias": "Bullish",
     "count": 1
   },
   "dayOpenSpot": 23921.95
