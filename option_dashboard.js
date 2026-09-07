@@ -73,7 +73,7 @@ const { loadWorkbookCache } = require("./workbook");
 const { initState } = require("./state");
 const { loadTuning, runTuning } = require("./tuning");
 const { connectStream } = require("./stream");
-const { run } = require("./engine");
+const { run, fastExitCheck } = require("./engine");
 const { runBacktest } = require("./backtest");
 const { setupInstrument } = require("./prompts");
 
@@ -141,6 +141,18 @@ if (mode === "backtest") {
       await run();
     }, CONFIG.pollMs);
 
+    // Between-poll exit guard: price-only, fires only while a position is
+    // open (engine.fastExitCheck). Entries stay on the 3-min chain poll.
+    // Same wiring as the SBIN/SENSEX bots — this copy had the function
+    // but never scheduled it, so STOP/TARGET/PROFIT_LOCK were only ever
+    // evaluated every 3 minutes.
+    if (CONFIG.fastExitMs) {
+      console.log(`Fast exit check every ${CONFIG.fastExitMs / 1000}s (while a position is open)`);
+      setInterval(() => {
+        fastExitCheck().catch(e => console.error("Fast exit check failed:", e.message));
+      }, CONFIG.fastExitMs);
+    }
+
   })();
 
 } else if (mode === "tick") {
@@ -202,6 +214,18 @@ if (mode === "backtest") {
       console.log("Running next cycle...");
       await run();
     }, CONFIG.pollMs);
+
+    // Between-poll exit guard: price-only, fires only while a position is
+    // open (engine.fastExitCheck). Entries stay on the 3-min chain poll.
+    // Same wiring as the SBIN/SENSEX bots — this copy had the function
+    // but never scheduled it, so STOP/TARGET/PROFIT_LOCK were only ever
+    // evaluated every 3 minutes.
+    if (CONFIG.fastExitMs) {
+      console.log(`Fast exit check every ${CONFIG.fastExitMs / 1000}s (while a position is open)`);
+      setInterval(() => {
+        fastExitCheck().catch(e => console.error("Fast exit check failed:", e.message));
+      }, CONFIG.fastExitMs);
+    }
 
   })();
 

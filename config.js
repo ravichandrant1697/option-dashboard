@@ -18,6 +18,7 @@ const TUNING_FILE = "tuning.json";           // self-tuned parameters, written d
 // prompts (NIFTY or Stock, and the gap between strikes for spreads).
 const CONFIG = {
   instrumentKey: "NSE_INDEX|Nifty 50",
+  instrumentName: "NIFTY",  // "Index or Stock" line of the Telegram alerts
   expiryDate: "2026-09-01", // auto-resolved at startup from the instruments
                             // master (nearest WEEKLY expiry for NIFTY, rolls
                             // on expiry day); EXPIRY_DATE env or the live-mode
@@ -69,8 +70,23 @@ const RISK_REWARD = 2;
 // unreachable, which also let the cost-floor gate pass on a reward that
 // never existed. 20%/10% of net entry scales to ANY stock.
 const OI_STRONG_RATIO = 2.5;
-const SCALP_TARGET_PCT = 0.2;  // scalp target = 20% of |net entry|
-const SCALP_LOCK_PCT = 0.1;    // profit floor once seen = 10% of |net entry|
+// 2026-09-05 retune for the naked-leg test week. Replaying the recorded
+// 3-min spot paths (14 Aug – 4 Sep, ATM ≈ ₹80 premium, delta 0.5) with a
+// persistence-3 entry, 30-min cooldown and 3 trades/day: the old 20/10/10
+// band netted ≈ +₹1.5k over 29 trades (9 stops, 5 targets, 11 locks);
+// 30/15/12.5 netted ≈ +₹9.9k over 31 (6 stops, 6 targets, 14 locks). The
+// 10% stop (≈ 8 pts ≈ 16 NIFTY pts) sat exactly at the p95 of a single
+// 3-min spot move, so noise stopped trades out. Stop stays = target /
+// RISK_REWARD (1:2), so 30% target ⇒ 15% stop. Spot-proxy replay — no
+// theta/IV/slippage — treat as direction, not precision.
+const SCALP_TARGET_PCT = 0.3;  // scalp target = 30% of |net entry| (was 0.2)
+// Profit-lock LADDER (2026-09-05, user directive): three floors as % of
+// |net entry|, ascending. The highest floor the move has traded ABOVE is
+// armed; a pullback to/below the armed floor exits PROFIT_LOCK. So a move
+// that saw +11% and turns exits at +10%, not at the +12.5% it never reached
+// and not back at the stop. Keep the array sorted ascending.
+const SCALP_LOCK_PCTS = [0.08, 0.10, 0.125];
+const SCALP_LOCK_PCT = SCALP_LOCK_PCTS[0]; // first rung — kept for older callers
 
 // Naked long options (Buy Call / Buy Put). History: 0 wins in 8 trades,
 // −₹5,133 across both journals under the OLD gates. Re-enabled 2026-08-20
@@ -79,7 +95,21 @@ const SCALP_LOCK_PCT = 0.1;    // profit floor once seen = 10% of |net entry|
 // score-100 trigger — flip to true to block them structurally again.
 // Config-level (not tuning.json) because the tuner recomputes its
 // blocklist from post-regime data and would silently forget the block.
-const BLOCK_NAKED_LEGS = true;
+const BLOCK_NAKED_LEGS = false; // 2026-09-05: opened for the naked-only test week
+
+// NAKED-ONLY TEST WEEK (2026-09-05 → ~2026-09-12): when true, the ONLY
+// tradeable structure is the single naked leg on the bias side (Buy Call
+// for Bullish, Buy Put for Bearish; Range = no trade). The spread/condor/
+// straddle code stays in the project untouched — flip this back to false
+// (and BLOCK_NAKED_LEGS to true) to return to the previous behaviour.
+// The naked leg must still score NAKED_MIN_SCORE in the strategy ranking
+// (100 = 2.5× OI dominance + build-up breadth + CONFIRMED 5-min candle
+// trend); a weaker read is journaled as a blocked signal, not traded.
+// Naked legs are also exempt from the tuner's blockedStrategies while the
+// test runs — five losing trades would otherwise switch the test off
+// mid-week; judge the week from the Trades sheet instead.
+const NAKED_ONLY = true;
+const NAKED_MIN_SCORE = 100;
 
 // Upstox NSE-options charge model (per executed ORDER — each leg is one
 // order, entry and exit are separate orders). Rates as of Oct 2024 revision.
@@ -190,7 +220,10 @@ module.exports = {
   OI_STRONG_RATIO,
   SCALP_TARGET_PCT,
   SCALP_LOCK_PCT,
+  SCALP_LOCK_PCTS,
   BLOCK_NAKED_LEGS,
+  NAKED_ONLY,
+  NAKED_MIN_SCORE,
   COSTS,
   MIN_EDGE_MULTIPLE,
   TUNING_REGIME_START,

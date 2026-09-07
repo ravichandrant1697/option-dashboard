@@ -9,7 +9,9 @@ const {
   CONFIG,
   MIN_EDGE_MULTIPLE,
   OI_STRONG_RATIO,
-  BLOCK_NAKED_LEGS
+  BLOCK_NAKED_LEGS,
+  NAKED_ONLY,
+  NAKED_MIN_SCORE
 } = require("./config");
 const { daysUntil, istTimestamp } = require("./clock");
 const { getActiveHorizon } = require("./horizons");
@@ -32,6 +34,70 @@ const { tuning } = require("./tuning");
 // format as the Excel Legs column, reused in Telegram alerts.
 function legsSummary(legs) {
   return legs.map(l => `${l.side} ${l.strike}${l.type}`).join(" | ");
+}
+
+// ---- Telegram alert format (2026-09-05, user-specified) -----------------
+// Entry and exit share one labeled block:
+//   Strategy Name / Index or Stock / Strike / Premium / Profit Lock1..3 /
+//   Stop Loss / Target — the exit adds Status (Target | Profit Lock<n> |
+//   Stop Loss | Signal Change | Square Off …) and PnL.
+
+// Underlying label: CONFIG.instrumentName when the bot's config sets it
+// (NIFTY / SBIN / SENSEX), else the part of the instrument key after "|".
+function underlyingName() {
+  return CONFIG.instrumentName || String(CONFIG.instrumentKey).split("|").pop();
+}
+
+// "24000PE" for a single naked leg; the full legs summary for structures.
+function strikeLabel(legs) {
+  return legs.length === 1 ? `${legs[0].strike}${legs[0].type}` : legsSummary(legs);
+}
+
+// Premium price as the alert shows it: debit = plain, credit = "(credit)".
+function premiumLabel(net) {
+  return `${Math.abs(net).toFixed(2)}${net < 0 ? " (credit)" : ""}`;
+}
+
+// The three Profit Lock lines + Stop Loss + Target, as NET-PREMIUM prices.
+// Ride mode (no ladder/target) prints "—" for the locks and "Signal
+// reversal" as the target so the block shape never changes.
+function levelLines(pos) {
+  const rungs = pos.lockDists ?? (pos.lockDist != null ? [pos.lockDist] : []);
+  const lockLine = i =>
+    `Profit Lock${i + 1} : ${rungs[i] != null ? (pos.netEntry + rungs[i]).toFixed(2) : "—"}`;
+  return [
+    lockLine(0),
+    lockLine(1),
+    lockLine(2),
+    `Stop Loss : ${(pos.netEntry - pos.stopDist).toFixed(2)}`,
+    `Target : ${pos.targetDist != null ? (pos.netEntry + pos.targetDist).toFixed(2) : "Signal reversal"}`
+  ].join("\n");
+}
+
+// Exit reason → alert Status. PROFIT_LOCK names the rung that was armed.
+function statusLabel(pos, reason) {
+  if (reason === "PROFIT_LOCK") {
+    const rungs = pos.lockDists ?? [];
+    const idx = rungs.indexOf(pos._lockLevel);
+    return idx >= 0 ? `Profit Lock${idx + 1}` : "Profit Lock";
+  }
+  return {
+    TARGET: "Target",
+    STOP: "Stop Loss",
+    SIGNAL_CHANGE: "Signal Change",
+    SQUARE_OFF: "Square Off",
+    TIME_STOP: "Time Stop",
+    EXPIRY_STOP: "Expiry Stop"
+  }[reason] || reason;
+}
+
+// Common header block for entry and exit alerts.
+function alertHeader(pos) {
+  return (
+    `Strategy Name : ${pos.strategy}\n` +
+    `Index or Stock : ${underlyingName()}\n` +
+    `Strike : ${strikeLabel(pos.legs)}`
+  );
 }
 
 // Execute all legs of a position as market orders. entry=true places the
@@ -176,13 +242,37 @@ async function buildTradePlan(result, chain) {
   // (BLOCK_NAKED_LEGS): 0 wins in 8 journal trades, −₹5,133 — and the
   // tuner's own blocklist resets whenever the regime date moves.
   const NAKED_STRATEGIES = ["Buy Call", "Buy Put"];
-  const chosen = [result.strategy1, result.strategy2, result.strategy3]
-    .filter(Boolean)
-    .find(
-      s =>
-        !tuning.blockedStrategies.includes(s) &&
-        !(BLOCK_NAKED_LEGS && NAKED_STRATEGIES.includes(s))
-    );
+  const ranked = [
+    [result.strategy1, result.strategy1Score],
+    [result.strategy2, result.strategy2Score],
+    [result.strategy3, result.strategy3Score]
+  ].filter(([s]) => s);
+  let chosen;
+  if (NAKED_ONLY) {
+    // Naked-only test week (config.NAKED_ONLY): the single leg on the
+    // bias side is the ONLY candidate — spreads/condor/straddle are not
+    // considered at all, however they rank. Range bias has no naked side
+    // → no signal. A naked read below NAKED_MIN_SCORE (or outside the
+    // top-3 ranking) is still priced and journaled, but blocked: the
+    // score-100 trigger is what requires the confirmed candle trend.
+    chosen =
+      result.bias === "Bullish" ? "Buy Call" :
+      result.bias === "Bearish" ? "Buy Put" : null;
+    if (!chosen) return null;
+    const nakedScore = ranked.find(([s]) => s === chosen)?.[1] ?? null;
+    if (!blocked && (nakedScore == null || nakedScore < NAKED_MIN_SCORE)) {
+      blocked = `naked ${chosen} score ${nakedScore ?? "n/a"} < ${NAKED_MIN_SCORE} (trend not confirmed)`;
+      console.log(`⛔ ENTRY gate (naked score): ${blocked} — signal still logged`);
+    }
+  } else {
+    chosen = ranked
+      .map(([s]) => s)
+      .find(
+        s =>
+          !tuning.blockedStrategies.includes(s) &&
+          !(BLOCK_NAKED_LEGS && NAKED_STRATEGIES.includes(s))
+      );
+  }
   if (!chosen) return null;
 
   const rec = recommend(chosen, result.atmStrike);
@@ -220,7 +310,7 @@ async function buildTradePlan(result, chain) {
     legs.length === 1 ? "scalp" :
     result.bias === "Range" ? "default" :
     dominance >= OI_STRONG_RATIO ? "ride" : "scalp";
-  const { stopDist, targetDist, lockDist } = exitLevels(netEntry, exitMode, legs.length === 1);
+  const { stopDist, targetDist, lockDist, lockDists } = exitLevels(netEntry, exitMode, legs.length === 1);
   // Reference capture for gates that need a number in ride mode (no fixed
   // target). 1R (stopDist), NOT stop × RISK_REWARD: rides exit on signal
   // reversal, and the journal shows their realized capture is nowhere near
@@ -309,7 +399,7 @@ async function buildTradePlan(result, chain) {
     }
   }
 
-  return { rec, legs, netEntry, stopDist, targetDist, lockDist, exitMode, lots, estCharges: estCharges ?? 0, blocked };
+  return { rec, legs, netEntry, stopDist, targetDist, lockDist, lockDists, exitMode, lots, estCharges: estCharges ?? 0, blocked };
 }
 
 // Open a paper position: store it in the in-memory state, record the
@@ -327,7 +417,8 @@ async function openPosition(result, plan) {
     netEntry: plan.netEntry,
     stopDist: plan.stopDist,
     targetDist: plan.targetDist, // null = ride mode (no fixed target)
-    lockDist: plan.lockDist ?? null, // scalp only: premium-relative profit floor
+    lockDist: plan.lockDist ?? null,   // scalp only: first profit-lock rung (legacy field)
+    lockDists: plan.lockDists ?? null, // scalp only: the 8/10/12.5% ladder, ascending
     exitMode: plan.exitMode,     // ride | scalp | default — journaled for tuning
     estCharges: plan.estCharges, // Upstox round-trip estimate, deducted at close
     confidence: result.confidence,
@@ -368,35 +459,14 @@ async function openPosition(result, plan) {
   // Live mode: fire the real entry orders (paper journal runs regardless)
   await executeLegs(pos, true);
 
-  // Telegram entry signal — labeled multi-line format. Levels are NET-
-  // PREMIUM prices (same convention as the sheet): stop = netEntry −
-  // stopDist, target = netEntry + targetDist; ride mode has no target —
-  // a signal reversal is its exit.
-  const stopLevel = (pos.netEntry - pos.stopDist).toFixed(2);
-  const exitPlan =
-    (pos.targetDist != null
-      ? `Target @ ${(pos.netEntry + pos.targetDist).toFixed(2)}`
-      : "Signal reversal (ride)") +
-    ` / Stop @ ${stopLevel}` +
-    (pos.lockDist != null ? ` / Lock @ ${(pos.netEntry + pos.lockDist).toFixed(2)}` : "");
+  // Telegram entry alert — labeled block (see alertHeader/levelLines).
+  // Levels are NET-PREMIUM prices, same convention as the sheet.
   await notify(
-    `🟢 PAPER ENTRY [${pos.horizon}]
-` +
-      `StrategyName : ${pos.strategy}
-` +
-      `Strike : ${legsSummary(pos.legs)}
-` +
-      `Lot : ${pos.lots}
-` +
-      `Premium ${pos.netEntry < 0 ? "Sell" : "Buy"} @ : ${Math.abs(pos.netEntry).toFixed(2)}${pos.netEntry < 0 ? " (credit)" : ""}
-` +
-      `Stop Loss @ : ${stopLevel}
-` +
-      `Reason on Exit : ${exitPlan}
-` +
-      `Confidence : ${pos.confidence}
-` +
-      `Expiry : ${pos.expiry}`
+    `🟢 PAPER ENTRY\n` +
+      `${alertHeader(pos)}\n` +
+      `Premium : ${premiumLabel(pos.netEntry)}\n` +
+      `${levelLines(pos)}\n` +
+      `Lot : ${pos.lots} | Expiry : ${pos.expiry} | Confidence : ${pos.confidence}`
   );
 }
 
@@ -405,6 +475,11 @@ async function openPosition(result, plan) {
 // backtester's input) with the outcome AND the exit reason, and alert.
 async function closePosition(pos, netNow, outcome, reason) {
   if (runtime.closingIds.has(pos.id)) return; // already closing (stream/poll race)
+  // Already closed: the 45s fast-exit check and the 3-min poll both walk
+  // a snapshot of state.open — if the other loop closed this position
+  // while this one was awaiting, closing it again would journal a second
+  // closedToday row and a second alert.
+  if (!getState().open.some(p => p.id === pos.id)) return;
   runtime.closingIds.add(pos.id);
 
   const qty = pos.lots * LOT_SIZE;
@@ -457,9 +532,14 @@ async function closePosition(pos, netNow, outcome, reason) {
   // Live mode: square off the real legs (reversed orders)
   await executeLegs(pos, false);
 
+  // Telegram exit alert — same block as the entry, plus Status and PnL.
   await notify(
-    `${outcome === "WIN" ? "✅" : "🔴"} PAPER EXIT ${pos.strategy} ${legsSummary(pos.legs)} ` +
-      `${outcome} (${reason}) | PnL ₹${trade.PnL} (gross ₹${trade.GrossPnL} − charges ₹${chargesRs})`
+    `${outcome === "WIN" ? "✅" : "🔴"} PAPER EXIT\n` +
+      `${alertHeader(pos)}\n` +
+      `Premium : ${premiumLabel(pos.netEntry)} → ${premiumLabel(netNow)}\n` +
+      `${levelLines(pos)}\n` +
+      `Status : ${statusLabel(pos, reason)}\n` +
+      `PnL : ₹${trade.PnL} (gross ₹${trade.GrossPnL} − charges ₹${chargesRs}) ${outcome}`
   );
   runtime.closingIds.delete(pos.id);
 }

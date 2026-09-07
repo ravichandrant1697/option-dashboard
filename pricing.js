@@ -7,7 +7,7 @@ const {
   STOP_PCT,
   RISK_REWARD,
   SCALP_TARGET_PCT,
-  SCALP_LOCK_PCT,
+  SCALP_LOCK_PCTS,
   MAX_RISK,
   LOT_SIZE,
   MAX_LOTS,
@@ -53,11 +53,12 @@ function getNetPremium(chain, legs) {
 //             null safely; JSON turns Infinity into null anyway, but then
 //             a restart would compare move >= null — always true — and
 //             instantly close every ride position as a TARGET win.)
-//   "scalp"   bank a premium-relative band: target SCALP_TARGET_PCT (20%)
+//   "scalp"   bank a premium-relative band: target SCALP_TARGET_PCT (30%)
 //             of |net entry|, stop = target / RISK_REWARD keeps 1:2, and
-//             lockDist = SCALP_LOCK_PCT (10%) — once the move has SEEN
-//             +lock, a pullback to that level exits PROFIT_LOCK instead of
-//             letting the win round-trip back to the stop. Percentages,
+//             lockDists = the SCALP_LOCK_PCTS ladder (8/10/12.5%) — the
+//             highest rung the move has SEEN is armed; a pullback to that
+//             rung exits PROFIT_LOCK instead of letting the win round-trip
+//             back to the stop. lockDist = first rung (legacy). Percentages,
 //             not points: absolute 10/5-pt bands were NIFTY premium scale
 //             and unreachable on a ~₹4–13 stock structure.
 //   "default" Range structures — stop = STOP_PCT (50%) of net premium,
@@ -74,8 +75,12 @@ function exitLevels(netEntry, mode = "default", nakedLeg = false) {
     mode === "ride" ? null :
     mode === "scalp" ? scalpTarget :
     stopDist * RISK_REWARD;
-  const lockDist = mode === "scalp" ? Math.abs(netEntry) * SCALP_LOCK_PCT : null;
-  return { stopDist, targetDist, lockDist };
+  const lockDists =
+    mode === "scalp"
+      ? [...SCALP_LOCK_PCTS].sort((a, b) => a - b).map(p => Math.abs(netEntry) * p)
+      : null;
+  const lockDist = lockDists ? lockDists[0] : null;
+  return { stopDist, targetDist, lockDist, lockDists };
 }
 
 // Exit decision for an open position, horizon-aware. Priority order:
@@ -120,13 +125,19 @@ function checkExit(pos, netNow, result) {
   if (pos.targetDist != null && move >= pos.targetDist)
     return { outcome: netWin ? "WIN" : "LOSS", reason: "TARGET" };
 
-  // PROFIT_LOCK (scalp's premium-band floor): once the move has traded
-  // ABOVE lockDist, a pullback to/below it banks the win — a scalp that
-  // reached +lock must never round-trip back to the stop. _lockArmed
-  // lives on pos (persisted in positions.json), so a restart keeps it.
-  if (pos.lockDist != null) {
-    if (move > pos.lockDist) pos._lockArmed = true;
-    else if (pos._lockArmed && move <= pos.lockDist)
+  // PROFIT_LOCK ladder (scalp): pos.lockDists holds the rungs ascending
+  // (8/10/12.5% of entry). Each time the move trades ABOVE a rung, that
+  // rung becomes the armed floor (_lockLevel, persisted in positions.json
+  // so a restart keeps it — a step-trailing stop that only ratchets up).
+  // A pullback to/below the armed floor banks the win. Legacy positions
+  // carry a single lockDist/_lockArmed — treated as a one-rung ladder.
+  const rungs = pos.lockDists ?? (pos.lockDist != null ? [pos.lockDist] : null);
+  if (rungs) {
+    if (pos._lockLevel == null && pos._lockArmed) pos._lockLevel = rungs[0];
+    for (const rung of rungs) {
+      if (move > rung && (pos._lockLevel == null || rung > pos._lockLevel)) pos._lockLevel = rung;
+    }
+    if (pos._lockLevel != null && move <= pos._lockLevel)
       return { outcome: netWin ? "WIN" : "LOSS", reason: "PROFIT_LOCK" };
   }
 
@@ -159,7 +170,16 @@ function checkExit(pos, netNow, result) {
       pos._signalMiss = (pos._signalMiss || 0) + 1;
       pos._lastMissTs = result.timestamp;
     }
-    if (pos._signalMiss >= horizon.signalPersistence)
+    // In NET profit (move covers the charges) a reversal is banked at
+    // signalPersistenceInProfit polls (intraday: 1 — the premium gives the
+    // gain back faster than 4 polls take). At a loss the full persistence
+    // still applies, so a single noisy poll cannot whipsaw a position out
+    // while the stop guards the downside.
+    const needed =
+      netWin && horizon.signalPersistenceInProfit != null
+        ? horizon.signalPersistenceInProfit
+        : horizon.signalPersistence;
+    if (pos._signalMiss >= needed)
       return { outcome: netWin ? "WIN" : "LOSS", reason: "SIGNAL_CHANGE" };
   } else if (pos._signalMiss) {
     pos._signalMiss = 0; // signal realigned — reset the streak

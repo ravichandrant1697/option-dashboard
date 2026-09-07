@@ -70,6 +70,11 @@ const HORIZONS = {
                                    // middle, not the best-fitting, value.
                                    // The premium-relative stop still guards
                                    // the downside while the position waits.
+    signalPersistenceInProfit: 1,  // 2026-09-05: once the move covers the
+                                   // charges (net profit), the FIRST reversal
+                                   // poll exits — waiting 4 polls (~12 min) let
+                                   // +5-pt gains round-trip to a loss (3 Sep,
+                                   // 17 Aug). At a loss the 4-poll rule stays.
     plannedHoldDays: 0             // theta gate off — decay is intraday noise
   },
 
