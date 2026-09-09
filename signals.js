@@ -4,11 +4,11 @@
  * strategy scoring, and the intraday candle trend.
  *
  * Owns two pieces of session state:
- *   prevLtp           tick-to-tick premium comparison (internal)
+ *   (premium change is LTP vs previous-session close — no tick history)
  *   candleTrend       written here, read everywhere via runtime
  */
 const { CONFIG } = require("./config");
-const { istTimestamp } = require("./clock");
+const { istTimestamp, todayIST } = require("./clock");
 const { fetchCandles, fetchDailyCandles } = require("./upstox-api");
 const { getActiveHorizon } = require("./horizons");
 const runtime = require("./runtime");
@@ -227,38 +227,49 @@ async function maybeRefreshCandleTrend() {
  * entry gate blocks directional trades the futures flow CONTRADICTS.
  * ═══════════════════════════════════════════════════════════════════════ */
 
-let prevFut = null; // { ltp, oi } of the previous poll's futures quote
+// Session anchor for the futures OI: { date, oi } seeded from the first
+// quote of each IST day. The quote endpoint has no previous-day OI, so the
+// day's first reading is the baseline; price uses the quote's own day open.
+let futAnchor = null;
 
 // Feed one futures quote row (from fetchQuotes) — updates the runtime
-// buildup the entry gate reads. First poll only seeds history; a missing
-// quote leaves the previous read in place (stale beats fabricated).
+// buildup the entry gate reads. A missing quote leaves the previous read
+// in place (stale beats fabricated).
+//
+// 2026-09-08: DAY-LEVEL comparison. The previous version compared this
+// poll with the previous poll (3-min ΔP × 3-min ΔOI); on the recorded
+// NIFTY/SENSEX/SBIN sheets that read changed direction on 50–62% of polls
+// and contradicted the day's real direction on 22–50% of them — a random
+// veto that blocked the only fully-qualified NIFTY entry of 2026-09-08.
+// Both deltas are now measured since the session open, so the gate
+// describes what the futures have done TODAY and only flips on a genuine
+// intraday reversal. It still runs on every poll.
 function updateFuturesBuildup(quote) {
   const ltp = quote?.last_price;
   const oi = quote?.oi;
-  if (ltp == null || oi == null) return;
+  const dayOpen = quote?.ohlc?.open;
+  if (ltp == null || oi == null || dayOpen == null) return;
 
-  if (prevFut) {
-    const dP = ltp - prevFut.ltp;
-    const dOI = oi - prevFut.oi;
-    let label = "Neutral", direction = "Neutral";
-    if (dP > 0 && dOI > 0) { label = "Long Buildup"; direction = "Bullish"; }
-    else if (dP < 0 && dOI > 0) { label = "Short Buildup"; direction = "Bearish"; }
-    else if (dP < 0 && dOI < 0) { label = "Long Unwinding"; direction = "Bearish"; }
-    else if (dP > 0 && dOI < 0) { label = "Short Covering"; direction = "Bullish"; }
-    runtime.setFuturesBuildup({ label, direction });
-    console.log(`📈 FUTURES: ${label} (ΔP ${dP.toFixed(2)}, ΔOI ${dOI}) → ${direction}`);
+  const today = todayIST();
+  if (!futAnchor || futAnchor.date !== today) {
+    futAnchor = { date: today, oi }; // first reading of the day
   }
-  prevFut = { ltp, oi };
+
+  const dP = ltp - dayOpen;      // since today's open
+  const dOI = oi - futAnchor.oi; // since the session's first reading
+  let label = "Neutral", direction = "Neutral";
+  if (dP > 0 && dOI > 0) { label = "Long Buildup"; direction = "Bullish"; }
+  else if (dP < 0 && dOI > 0) { label = "Short Buildup"; direction = "Bearish"; }
+  else if (dP < 0 && dOI < 0) { label = "Long Unwinding"; direction = "Bearish"; }
+  else if (dP > 0 && dOI < 0) { label = "Short Covering"; direction = "Bullish"; }
+  runtime.setFuturesBuildup({ label, direction });
+  console.log(`📈 FUTURES: ${label} (ΔP ${dP.toFixed(2)}, ΔOI ${dOI} vs day open) → ${direction}`);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
  * ANALYSIS — OI totals, PCR, S/R, bias, confidence, strategy scores
  * ═══════════════════════════════════════════════════════════════════════ */
 
-// Previous tick's LTP per option (key: "strike|CE"). Price change is
-// measured tick-to-tick against the last poll, held in memory; the first
-// tick seeds from the chain's close_price (previous session) when present.
-let prevLtp = new Map();
 
 // Full chain analysis: OI totals, PCR, S/R levels, build-up direction,
 // IV, Greeks, market bias, confidence score, and ranked strategy scores.
@@ -313,8 +324,6 @@ function analyze(chain, marketPcr) {
   let totalVega = 0;
   let sideCount = 0;
 
-  // LTPs seen this tick — becomes prevLtp for the next poll's comparison.
-  const nextLtp = new Map();
 
   filteredChain.forEach(row => {
     const ce = row.call_options;
@@ -343,20 +352,19 @@ function analyze(chain, marketPcr) {
     const ceOIChange = ce.change_in_oi || 0;
     const peOIChange = pe.change_in_oi || 0;
 
-    // Price change = current LTP vs the previous poll's LTP (in-memory).
-    // First tick has no poll history — seed from the chain's close_price
-    // (previous session) so build-up classification works immediately;
-    // flat feeds without close_price start Neutral, as before.
-    const ceKey = `${row.strike_price}|CE`;
-    const peKey = `${row.strike_price}|PE`;
-    const cePriceChange =
-      ce.market_data.ltp -
-      (prevLtp.get(ceKey) ?? ce.market_data.close_price ?? ce.market_data.ltp);
-    const pePriceChange =
-      pe.market_data.ltp -
-      (prevLtp.get(peKey) ?? pe.market_data.close_price ?? pe.market_data.ltp);
-    nextLtp.set(ceKey, ce.market_data.ltp);
-    nextLtp.set(peKey, pe.market_data.ltp);
+    // Price change = current LTP vs the PREVIOUS SESSION close — the same
+    // reference change_in_oi uses (oi − prev_oi), so both halves of the
+    // build-up read describe the day. 2026-09-08: the old poll-to-poll
+    // LTP delta paired a 3-min price tick with a full-day OI delta; with
+    // ΔOI positive on nearly every strike all day, the direction was
+    // decided by the sign of a one-tick premium move, and the bias
+    // flipped on ~60% of polls (recorded NIFTY/SENSEX/SBIN, Sep 4–8) —
+    // the persistence gate could never clear. A strike without a
+    // close_price carries no information → 0 → Neutral.
+    const cePriceChange = ce.market_data.close_price != null
+      ? ce.market_data.ltp - ce.market_data.close_price : 0;
+    const pePriceChange = pe.market_data.close_price != null
+      ? pe.market_data.ltp - pe.market_data.close_price : 0;
 
     // Classify CE and PE SEPARATELY through the seller lens — the same
     // premium/OI move means opposite directions on the two sides (FIX 1).
@@ -382,9 +390,6 @@ function analyze(chain, marketPcr) {
       }
     }
   });
-
-  // Remember this tick's LTPs for the next poll's price-change comparison
-  prevLtp = nextLtp;
 
   // Highest-OI strikes act as resistance (calls) and support (puts).
   const topCalls = [...filteredChain]
