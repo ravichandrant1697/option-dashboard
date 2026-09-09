@@ -1,6 +1,39 @@
 {
   "date": "2026-09-09",
-  "open": [],
+  "open": [
+    {
+      "id": 1788946567490,
+      "openedAt": "2026-09-09 15:06:07",
+      "openedAtMs": 1788946567490,
+      "strategy": "Buy Put",
+      "legs": [
+        {
+          "strike": 23450,
+          "type": "PE",
+          "side": "BUY",
+          "instrument_key": "NSE_FO|47296"
+        }
+      ],
+      "lots": 1,
+      "netEntry": 91.3,
+      "stopDist": 13.694999999999999,
+      "targetDist": 27.389999999999997,
+      "lockDist": 7.304,
+      "lockDists": [
+        7.304,
+        9.13,
+        11.4125
+      ],
+      "exitMode": "scalp",
+      "estCharges": 58.3,
+      "confidence": 100,
+      "entryBias": "Bearish",
+      "trendAtEntry": "Down",
+      "horizon": "intraday",
+      "product": "I",
+      "expiry": "2026-09-15"
+    }
+  ],
   "closedToday": [
     {
       "PosId": 1788935646070,
@@ -27,7 +60,7 @@
   ],
   "biasStreak": {
     "bias": "Bearish",
-    "count": 116
+    "count": 119
   },
   "dayOpenSpot": 23495.5
 }
