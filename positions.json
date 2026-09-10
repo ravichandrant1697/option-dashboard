@@ -1,55 +1,10 @@
 {
-  "date": "2026-09-09",
+  "date": "2026-09-10",
   "open": [],
-  "closedToday": [
-    {
-      "PosId": 1788935646070,
-      "Timestamp": "2026-09-09 12:04:06",
-      "ExitTime": "2026-09-09 12:31:05",
-      "Horizon": "intraday",
-      "Expiry": "2026-09-15",
-      "Strategy": "Buy Put",
-      "Legs": "BUY 23500PE",
-      "Lots": 1,
-      "NetEntry": 108.35,
-      "NetExit": 91.7,
-      "Result": "LOSS",
-      "ExitReason": "STOP",
-      "GrossPnL": -1082.25,
-      "Charges": 60.38,
-      "PnL": -1142.63,
-      "ExitMode": "scalp",
-      "RR": 2,
-      "Confidence": 100,
-      "EntryBias": "Bearish",
-      "TrendAtEntry": "Down"
-    },
-    {
-      "PosId": 1788946567490,
-      "Timestamp": "2026-09-09 15:06:07",
-      "ExitTime": "2026-09-09 15:20:24",
-      "Horizon": "intraday",
-      "Expiry": "2026-09-15",
-      "Strategy": "Buy Put",
-      "Legs": "BUY 23450PE",
-      "Lots": 1,
-      "NetEntry": 91.3,
-      "NetExit": 91.45,
-      "Result": "LOSS",
-      "ExitReason": "SQUARE_OFF",
-      "GrossPnL": 9.75,
-      "Charges": 58.3,
-      "PnL": -48.55,
-      "ExitMode": "scalp",
-      "RR": 2,
-      "Confidence": 100,
-      "EntryBias": "Bearish",
-      "TrendAtEntry": "Down"
-    }
-  ],
+  "closedToday": [],
   "biasStreak": {
-    "bias": "Bearish",
-    "count": 126
+    "bias": "Range",
+    "count": 1
   },
-  "dayOpenSpot": 23495.5
+  "dayOpenSpot": 23464.2
 }
