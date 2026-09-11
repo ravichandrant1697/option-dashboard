@@ -11,9 +11,10 @@ const {
   OI_STRONG_RATIO,
   BLOCK_NAKED_LEGS,
   NAKED_ONLY,
-  NAKED_MIN_SCORE
+  NAKED_MIN_SCORE,
+  NAKED_MIN_CONFIDENCE
 } = require("./config");
-const { daysUntil, istTimestamp } = require("./clock");
+const { daysUntil, istTimestamp, nowIST } = require("./clock");
 const { getActiveHorizon } = require("./horizons");
 const runtime = require("./runtime");
 const { placeOrder, fetchQuotes } = require("./upstox-api");
@@ -145,7 +146,12 @@ async function executeLegs(pos, entry) {
 // below the filter, no strategy, no quote). Async since 2026-08-20: the
 // depth gate fetches live bid/ask for the legs before approving an entry.
 async function buildTradePlan(result, chain) {
-  if (result.confidence < RULES.minConfidence) return null; // trade filter
+  // Trade filter. Under NAKED_ONLY the naked leg uses the config floor
+  // (NAKED_MIN_CONFIDENCE), NOT the tuner's RULES.minConfidence override:
+  // the SBIN tuner had raised it to 90 from spread-era trades, which turned
+  // every conf-83 naked read into a silent NO TRADE (no Blocked reason).
+  const minConf = NAKED_ONLY ? NAKED_MIN_CONFIDENCE : RULES.minConfidence;
+  if (result.confidence < minConf) return null;
 
   const horizon = getActiveHorizon();
   const candleTrend = runtime.getCandleTrend();
@@ -161,6 +167,24 @@ async function buildTradePlan(result, chain) {
     if (dte < horizon.minEntryDTE) {
       blocked = `expiry ${dte}d away < min ${horizon.minEntryDTE}d (${horizon.name})`;
       console.log(`⛔ ENTRY gate (${horizon.name}): ${blocked} — signal still logged`);
+    }
+  }
+
+  // Execution gate (entry window, 2026-09-11): no NEW entries before
+  // RULES.entryStart or after RULES.entryEnd (IST). Before 10:00 the first
+  // volume-surge reading compares the opening candle against five others
+  // and always looks like a surge (10 Sep SENSEX 09:45 entry: −₹1,317);
+  // after 14:50 a scalp has < 30 min before the square-off (9 Sep NIFTY
+  // 15:06 entry: charges only). Exits are unaffected by this gate.
+  if (!blocked && RULES.entryStartHour != null) {
+    const d = nowIST();
+    const nowMin = d.getHours() * 60 + d.getMinutes();
+    const startMin = RULES.entryStartHour * 60 + RULES.entryStartMin;
+    const endMin = RULES.entryEndHour * 60 + RULES.entryEndMin;
+    if (nowMin < startMin || nowMin > endMin) {
+      const hhmm = m => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+      blocked = `outside entry window ${hhmm(startMin)}–${hhmm(endMin)} IST`;
+      console.log(`⛔ ENTRY gate (entry window): ${blocked} — signal still logged`);
     }
   }
 
@@ -210,6 +234,32 @@ async function buildTradePlan(result, chain) {
       blocked = `bias ${result.bias} vs ${anchorPrice} on wrong side of ${anchorName} ${anchor}`;
       console.log(`⛔ ENTRY gate (day-anchor alignment): ${blocked} — signal still logged`);
     }
+  }
+
+  // Execution gate (day-extreme retest, 2026-09-11): a Bearish entry with
+  // spot sitting just ABOVE a day low that was set ≥ extremeRetestAgeMin
+  // ago is a put bought at support (9 Sep NIFTY 12:04, 9 pts above the
+  // 10:01 low: −₹1,143); a Bullish entry just under an old day high is a
+  // call bought at resistance (25 Aug SENSEX 11:59: −₹679). A FRESH break
+  // — spot at or through the extreme — passes: that is the momentum entry.
+  // state.dayExtremes holds the PREVIOUS polls' extremes (the engine
+  // updates it after the plan), so the current spot is never its own low.
+  const ext = getState().dayExtremes;
+  if (!blocked && RULES.extremeRetestPct && ext && result.bias !== "Range") {
+    const ageMin = ts => (Date.now() - ts) / 60000;
+    const spot = result.spot;
+    if (
+      result.bias === "Bearish" && ext.low != null && spot > ext.low &&
+      (spot - ext.low) / spot < RULES.extremeRetestPct && ageMin(ext.lowTs) >= RULES.extremeRetestAgeMin
+    ) {
+      blocked = `bias Bearish retests day low ${ext.low} set ${Math.round(ageMin(ext.lowTs))} min ago (spot ${spot})`;
+    } else if (
+      result.bias === "Bullish" && ext.high != null && spot < ext.high &&
+      (ext.high - spot) / spot < RULES.extremeRetestPct && ageMin(ext.highTs) >= RULES.extremeRetestAgeMin
+    ) {
+      blocked = `bias Bullish retests day high ${ext.high} set ${Math.round(ageMin(ext.highTs))} min ago (spot ${spot})`;
+    }
+    if (blocked) console.log(`⛔ ENTRY gate (day-extreme retest): ${blocked} — signal still logged`);
   }
 
   // Execution gate (volume surge): a directional move without volume was

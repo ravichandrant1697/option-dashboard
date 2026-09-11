@@ -1,8 +1,6 @@
 {
-  "lastTuneDate": "2026-09-10",
+  "lastTuneDate": "2026-09-04",
   "minConfidence": null,
-  "blockedStrategies": [
-    "Bear Put Spread"
-  ],
+  "blockedStrategies": [],
   "requireTrendMatch": false
 }

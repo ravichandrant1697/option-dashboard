@@ -12,7 +12,7 @@ const { fetchMarketData, fetchQuotes } = require("./upstox-api");
 const { analyze, maybeRefreshCandleTrend, updateFuturesBuildup } = require("./signals");
 const { buildTradePlan, openPosition, closePosition } = require("./trade");
 const { getNetPremium, checkExit } = require("./pricing");
-const { getState, rollStateIfNewDay, saveState, canOpen, trackBiasStreak, trackDayOpen } = require("./state");
+const { getState, rollStateIfNewDay, saveState, canOpen, trackBiasStreak, trackDayOpen, trackDayExtremes } = require("./state");
 const { appendRow, dashboardSheetName, toDashboardRow } = require("./workbook");
 const { maybeRefreshPortfolio, maybeRefreshPositions } = require("./portfolio");
 const { tuning, runTuning } = require("./tuning");
@@ -139,6 +139,10 @@ async function run() {
     console.log("Building trade plan...");
 
     const plan = await buildTradePlan(result, chain);
+
+    // AFTER the plan: the day-extreme retest gate must compare this poll's
+    // spot against the PREVIOUS polls' low/high, never against itself.
+    trackDayExtremes(result.spot);
 
     console.log(
       "Trade Plan:",

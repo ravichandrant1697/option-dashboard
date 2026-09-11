@@ -17,7 +17,11 @@ const { todayIST, nowIST } = require("./clock");
 // dayOpenSpot = the session's FIRST spot reading — the day-open alignment
 // gate (RULES.dayOpenAlignment) compares entries against it. Persisted so
 // the afternoon session keeps the morning's anchor, not its own first poll.
-let state = { date: todayIST(), open: [], closedToday: [], biasStreak: { bias: null, count: 0 }, dayOpenSpot: null };
+// dayExtremes = the day's running spot LOW/HIGH with the epoch ms they were
+// set — the day-extreme retest gate (RULES.extremeRetestPct) reads it.
+// Updated AFTER the plan is built, so a poll never sees its own spot as
+// the extreme. Persisted like dayOpenSpot.
+let state = { date: todayIST(), open: [], closedToday: [], biasStreak: { bias: null, count: 0 }, dayOpenSpot: null, dayExtremes: null };
 
 // Always fetch fresh — the object is REPLACED on day roll / recovery.
 function getState() {
@@ -44,8 +48,20 @@ function initState() {
 function rollStateIfNewDay() {
   const today = todayIST();
   if (state.date !== today) {
-    state = { date: today, open: state.open, closedToday: [], biasStreak: { bias: null, count: 0 }, dayOpenSpot: null };
+    state = { date: today, open: state.open, closedToday: [], biasStreak: { bias: null, count: 0 }, dayOpenSpot: null, dayExtremes: null };
   }
+}
+
+// Track the day's spot low/high (with the time each was set). Called by
+// the engine once per analysis tick AFTER buildTradePlan, so the retest
+// gate compares the current spot against PREVIOUS polls' extremes only.
+function trackDayExtremes(spot) {
+  if (!Number.isFinite(spot) || spot <= 0) return state.dayExtremes;
+  const now = Date.now();
+  const e = state.dayExtremes ?? (state.dayExtremes = { low: null, lowTs: null, high: null, highTs: null });
+  if (e.low == null || spot < e.low) { e.low = spot; e.lowTs = now; }
+  if (e.high == null || spot > e.high) { e.high = spot; e.highTs = now; }
+  return e;
 }
 
 // Count consecutive polls of the same bias — called by the engine exactly
@@ -114,4 +130,4 @@ function canOpen() {
   return null;
 }
 
-module.exports = { getState, initState, rollStateIfNewDay, saveState, canOpen, trackBiasStreak, trackDayOpen };
+module.exports = { getState, initState, rollStateIfNewDay, saveState, canOpen, trackBiasStreak, trackDayOpen, trackDayExtremes };

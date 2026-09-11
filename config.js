@@ -17,20 +17,17 @@ const TUNING_FILE = "tuning.json";           // self-tuned parameters, written d
 // Runtime config — instrumentKey and strikeDiff are set by the startup
 // prompts (NIFTY or Stock, and the gap between strikes for spreads).
 const CONFIG = {
-  instrumentKey: "NSE_INDEX|Nifty 50",
-  instrumentName: "NIFTY",  // "Index or Stock" line of the Telegram alerts
-  expiryDate: "2026-09-01", // auto-resolved at startup from the instruments
-                            // master (nearest WEEKLY expiry for NIFTY, rolls
-                            // on expiry day); EXPIRY_DATE env or the live-mode
-                            // prompt pins it
-  futuresKey: "",           // near-month NIFTY FUTURES — feeds the futures-
-                            // buildup confirmation gate AND, because an index
-                            // trades no volume, the VWAP/volume-surge gates
-                            // (signals.js falls back to futures candles).
-                            // Auto-resolved at startup; FUTURES_KEY env pins
-                            // it. Empty = those gates inactive.
-  strikeRange: 1000,        // analyze ATM ± this many points
-  strikeDiff: 50,           // spread width: sell leg = ATM ± strikeDiff (asked at startup)
+  instrumentKey: "NSE_EQ|INE062A01020",
+  instrumentName: "SBIN",  // "Index or Stock" line of the Telegram alerts
+  expiryDate: "2026-08-25", // auto-resolved at startup from the instruments
+                            // master (nearest expiry for the underlying);
+                            // EXPIRY_DATE env or the live-mode prompt pins it
+  futuresKey: "",           // near-month FUTURES of the underlying — the
+                            // futures-buildup confirmation gate. Auto-resolved
+                            // at startup; FUTURES_KEY env pins it. Empty =
+                            // gate inactive.
+  strikeRange: 100,         // analyze ATM ± this many points
+  strikeDiff: 10,           // spread width: sell leg = ATM ± strikeDiff (asked at startup)
   pollMs: 180000,           // poll every 3 min — Upstox refreshes OI on that cadence,                 // so faster polls just re-read stale OI against price noise
   portfolioRefreshMs: 15 * 60000, // snapshot long-term holdings every 15 min
   positionsRefreshMs: 5 * 60000,  // snapshot broker F&O positions every 5 min
@@ -41,7 +38,7 @@ const CONFIG = {
 };
 
 const CAPITAL = 50000;      // trading capital in ₹
-const LOT_SIZE = 65;        // NIFTY contract quantity per lot
+const LOT_SIZE = 750;        // contract quantity per lot
 const MAX_LOTS = 1;         // hard cap per trade — risk sizing never exceeds this
 
 // Risk model: risk up to 10% of capital per trade. (2% = ₹1,000 can never
@@ -70,21 +67,17 @@ const RISK_REWARD = 2;
 // unreachable, which also let the cost-floor gate pass on a reward that
 // never existed. 20%/10% of net entry scales to ANY stock.
 const OI_STRONG_RATIO = 2.5;
-// 2026-09-05 retune for the naked-leg test week. Replaying the recorded
-// 3-min spot paths (14 Aug – 4 Sep, ATM ≈ ₹80 premium, delta 0.5) with a
-// persistence-3 entry, 30-min cooldown and 3 trades/day: the old 20/10/10
-// band netted ≈ +₹1.5k over 29 trades (9 stops, 5 targets, 11 locks);
-// 30/15/12.5 netted ≈ +₹9.9k over 31 (6 stops, 6 targets, 14 locks). The
-// 10% stop (≈ 8 pts ≈ 16 NIFTY pts) sat exactly at the p95 of a single
-// 3-min spot move, so noise stopped trades out. Stop stays = target /
-// RISK_REWARD (1:2), so 30% target ⇒ 15% stop. Spot-proxy replay — no
-// theta/IV/slippage — treat as direction, not precision.
+// 2026-09-05 retune (same rules as the NIFTY bot): scalp target 30% of
+// |net entry| (stop = target / RISK_REWARD = 15%), and a three-rung profit-
+// lock LADDER — the highest rung the move has traded ABOVE is armed and a
+// pullback to it exits PROFIT_LOCK. Keep SCALP_LOCK_PCTS sorted ascending.
 const SCALP_TARGET_PCT = 0.3;  // scalp target = 30% of |net entry| (was 0.2)
-// Profit-lock LADDER (2026-09-05, user directive): three floors as % of
-// |net entry|, ascending. The highest floor the move has traded ABOVE is
-// armed; a pullback to/below the armed floor exits PROFIT_LOCK. So a move
-// that saw +11% and turns exits at +10%, not at the +12.5% it never reached
-// and not back at the stop. Keep the array sorted ascending.
+// 2026-09-11: the scalp/naked STOP is its own % of entry, no longer
+// target / RISK_REWARD (15%). With the lock ladder banking at 8/10/12.5%
+// a 15% stop needed > 62% wins to break even (realised: SENSEX 3/8, NIFTY
+// 1/10). Replaying 24 Aug – 10 Sep: 10% vs 15% = +₹113 on the same trades.
+// Target stays 30%, so the journal RR reads 3:1.
+const SCALP_STOP_PCT = 0.10;
 const SCALP_LOCK_PCTS = [0.08, 0.10, 0.125];
 const SCALP_LOCK_PCT = SCALP_LOCK_PCTS[0]; // first rung — kept for older callers
 
@@ -97,19 +90,23 @@ const SCALP_LOCK_PCT = SCALP_LOCK_PCTS[0]; // first rung — kept for older call
 // blocklist from post-regime data and would silently forget the block.
 const BLOCK_NAKED_LEGS = false; // 2026-09-05: opened for the naked-only test week
 
-// NAKED-ONLY TEST WEEK (2026-09-05 → ~2026-09-12): when true, the ONLY
-// tradeable structure is the single naked leg on the bias side (Buy Call
-// for Bullish, Buy Put for Bearish; Range = no trade). The spread/condor/
-// straddle code stays in the project untouched — flip this back to false
-// (and BLOCK_NAKED_LEGS to true) to return to the previous behaviour.
-// The naked leg must still score NAKED_MIN_SCORE in the strategy ranking
-// (100 = 2.5× OI dominance + build-up breadth + CONFIRMED 5-min candle
-// trend); a weaker read is journaled as a blocked signal, not traded.
-// Naked legs are also exempt from the tuner's blockedStrategies while the
-// test runs — five losing trades would otherwise switch the test off
-// mid-week; judge the week from the Trades sheet instead.
+// NAKED-ONLY TEST WEEK (2026-09-05 → ~2026-09-12, same as the NIFTY bot):
+// when true, the ONLY tradeable structure is the single naked leg on the
+// bias side (Buy Call for Bullish, Buy Put for Bearish; Range = no trade).
+// Spread/condor/straddle code stays untouched — flip this back to false
+// (and BLOCK_NAKED_LEGS to true) to return to the previous behaviour. The
+// naked leg must still score NAKED_MIN_SCORE (100 = 2.5× OI dominance +
+// build-up breadth + CONFIRMED candle trend); weaker reads are journaled
+// as blocked signals. Naked legs are exempt from the tuner's
+// blockedStrategies while the test runs.
 const NAKED_ONLY = true;
 const NAKED_MIN_SCORE = 100;
+// Confidence floor for the naked leg (2026-09-11) — used INSTEAD of the
+// tuner's RULES.minConfidence override while NAKED_ONLY runs. THIS bot's
+// tuner had raised minConfidence to 90 from 13 spread-era trades, which
+// turned every conf-83 naked read (41 Buy Call setups on 9–10 Sep) into a
+// silent NO TRADE (no Blocked reason). Same value as RULES.minConfidence.
+const NAKED_MIN_CONFIDENCE = 70;
 
 // Upstox NSE-options charge model (per executed ORDER — each leg is one
 // order, entry and exit are separate orders). Rates as of Oct 2024 revision.
@@ -139,10 +136,35 @@ const MIN_EDGE_MULTIPLE = 3;
 // 2026-08-21: stock-options retune (premium-relative scalps, naked block,
 // persistence 3, day-open gate) — the Aug 18–20 SBIN trades measured the
 // NIFTY-calibrated policy and are not evidence for this one.
-const TUNING_REGIME_START = "2026-08-21";
+// 2026-09-11: moved to the naked-only start — spread trades are not
+// evidence for the naked policy (they set this bot's minConfidence to 90).
+const TUNING_REGIME_START = "2026-09-05";
 
 const RULES = {
   minConfidence: 70,          // trade filter: below this → NO TRADE
+  // Entry window (2026-09-11), IST. No NEW entries before 10:00 — the first
+  // volume-surge reading (09:45) compares the opening candle against five
+  // others and always looks like a surge (10 Sep SENSEX 09:45: −₹1,317) —
+  // and none after 14:50 (< 30 min to the square-off; 9 Sep NIFTY 15:06:
+  // charges only). Replay showed SENSEX's 14:35/14:52 entries were its
+  // best, so the cap is 14:50, not 14:30. Exits are never gated by this.
+  entryStartHour: 10, entryStartMin: 0,
+  entryEndHour: 14, entryEndMin: 50,
+  // Scalp time stop (2026-09-11): a scalp/naked position that has armed NO
+  // profit-lock rung within this many minutes exits TIME_STOP — Range drift
+  // is not a SIGNAL_CHANGE and intraday has no maxHoldDays, so the 10 Sep
+  // SENSEX put sat 147 min for a −15% stop. 0 = off.
+  scalpTimeStopMin: 45,
+  // Day-extreme retest gate (2026-09-11): skip a Bearish entry when spot is
+  // ABOVE a day low set ≥ extremeRetestAgeMin ago by less than
+  // extremeRetestPct (put bought at support — 9 Sep NIFTY 12:04, 9 pts
+  // above the low: −₹1,143), and a Bullish entry symmetrically under an old
+  // day high (25 Aug SENSEX 11:59: −₹679). A fresh break passes. In replay
+  // this was the single biggest lever (OFF −₹1,475 → ON +₹356 over 14
+  // days) but on 2–4 events — 0.10% is the middle of the range that held.
+  // 0 = off.
+  extremeRetestPct: 0.001,
+  extremeRetestAgeMin: 30,
   // Entry-side persistence: the CURRENT bias must have held for this many
   // consecutive polls (including this one) before any entry is allowed.
   // 3 polls = ~9 min of agreement at the 3-min cadence. On the SBIN
@@ -219,11 +241,13 @@ module.exports = {
   RISK_REWARD,
   OI_STRONG_RATIO,
   SCALP_TARGET_PCT,
+  SCALP_STOP_PCT,
   SCALP_LOCK_PCT,
   SCALP_LOCK_PCTS,
   BLOCK_NAKED_LEGS,
   NAKED_ONLY,
   NAKED_MIN_SCORE,
+  NAKED_MIN_CONFIDENCE,
   COSTS,
   MIN_EDGE_MULTIPLE,
   TUNING_REGIME_START,

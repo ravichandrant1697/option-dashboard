@@ -6,7 +6,9 @@
 const {
   STOP_PCT,
   RISK_REWARD,
+  RULES,
   SCALP_TARGET_PCT,
+  SCALP_STOP_PCT,
   SCALP_LOCK_PCTS,
   MAX_RISK,
   LOT_SIZE,
@@ -67,9 +69,12 @@ function getNetPremium(chain, legs) {
 // naked ATM option is far too deep a drawdown.
 function exitLevels(netEntry, mode = "default", nakedLeg = false) {
   const scalpTarget = Math.abs(netEntry) * SCALP_TARGET_PCT;
+  // Scalp/naked stop is its own % of entry (SCALP_STOP_PCT, 10%) since
+  // 2026-09-11 — no longer target / RISK_REWARD (15%): with the lock ladder
+  // banking at 8–12.5%, a 15% stop needed > 62% wins to break even.
   const stopDist =
     nakedLeg || mode === "scalp"
-      ? scalpTarget / RISK_REWARD
+      ? Math.abs(netEntry) * SCALP_STOP_PCT
       : Math.abs(netEntry) * STOP_PCT;
   const targetDist =
     mode === "ride" ? null :
@@ -139,6 +144,17 @@ function checkExit(pos, netNow, result) {
     }
     if (pos._lockLevel != null && move <= pos._lockLevel)
       return { outcome: netWin ? "WIN" : "LOSS", reason: "PROFIT_LOCK" };
+
+    // Scalp time stop (2026-09-11): a scalp that has armed NO rung after
+    // RULES.scalpTimeStopMin is not a scalp any more — Range drift is not
+    // a SIGNAL_CHANGE and intraday has no maxHoldDays, so the 10 Sep SENSEX
+    // put sat 147 min bleeding theta until the −15% stop. Exit instead.
+    // Legacy positions without openedAtMs are left to the other rules.
+    if (
+      RULES.scalpTimeStopMin && pos._lockLevel == null && pos.openedAtMs &&
+      (Date.now() - pos.openedAtMs) / 60000 >= RULES.scalpTimeStopMin
+    )
+      return { outcome: netWin ? "WIN" : "LOSS", reason: "TIME_STOP" };
   }
 
   if (horizon.maxHoldDays) {
