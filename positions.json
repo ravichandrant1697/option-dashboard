@@ -31,13 +31,14 @@
       "trendAtEntry": "Down",
       "horizon": "intraday",
       "product": "I",
-      "expiry": "2026-09-22"
+      "expiry": "2026-09-22",
+      "_lockLevel": 19.2125
     }
   ],
   "closedToday": [],
   "biasStreak": {
     "bias": "Bearish",
-    "count": 75
+    "count": 78
   },
   "dayOpenSpot": 980.3,
   "dayExtremes": {
