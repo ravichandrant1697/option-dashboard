@@ -1,39 +1,16 @@
 {
-  "date": "2026-09-15",
+  "date": "2026-09-16",
   "open": [],
-  "closedToday": [
-    {
-      "PosId": 1789459951270,
-      "Timestamp": "2026-09-15 13:42:31",
-      "ExitTime": "2026-09-15 14:47:48",
-      "Horizon": "intraday",
-      "Expiry": "2026-09-22",
-      "Strategy": "Buy Put",
-      "Legs": "BUY 23250PE",
-      "Lots": 1,
-      "NetEntry": 153.7,
-      "NetExit": 207,
-      "Result": "WIN",
-      "ExitReason": "TARGET",
-      "GrossPnL": 3464.5,
-      "Charges": 65.89,
-      "PnL": 3398.61,
-      "ExitMode": "scalp",
-      "RR": 3,
-      "Confidence": 83,
-      "EntryBias": "Bearish",
-      "TrendAtEntry": "Down"
-    }
-  ],
+  "closedToday": [],
   "biasStreak": {
-    "bias": "Bearish",
-    "count": 102
+    "bias": "Bullish",
+    "count": 1
   },
-  "dayOpenSpot": 980.3,
+  "dayOpenSpot": 23224.15,
   "dayExtremes": {
-    "low": 979.1,
-    "lowTs": 1789455690478,
-    "high": 23335.7,
-    "highTs": 1789456889817
+    "low": 23224.15,
+    "lowTs": 1789530335999,
+    "high": 23258.35,
+    "highTs": 1789530517784
   }
 }
