@@ -1,16 +1,16 @@
 {
-  "date": "2026-09-18",
+  "date": "2026-09-21",
   "open": [],
   "closedToday": [],
   "biasStreak": {
     "bias": "Bullish",
-    "count": 27
+    "count": 1
   },
-  "dayOpenSpot": 23328.05,
+  "dayOpenSpot": 23378.6,
   "dayExtremes": {
-    "low": 23310.7,
-    "lowTs": 1789719295655,
-    "high": 23385.25,
-    "highTs": 1789723796370
+    "low": 23378.6,
+    "lowTs": 1789962733939,
+    "high": 23395.5,
+    "highTs": 1789963095539
   }
 }
