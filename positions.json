@@ -37,12 +37,12 @@
   "closedToday": [],
   "biasStreak": {
     "bias": "Bearish",
-    "count": 5
+    "count": 9
   },
   "dayOpenSpot": 23458.3,
   "dayExtremes": {
-    "low": 23374.85,
-    "lowTs": 1790053957655,
+    "low": 23368.1,
+    "lowTs": 1790054497819,
     "high": 23467.65,
     "highTs": 1790051978215
   }
