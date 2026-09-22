@@ -27,12 +27,12 @@
   ],
   "biasStreak": {
     "bias": "Bearish",
-    "count": 45
+    "count": 49
   },
   "dayOpenSpot": 23458.3,
   "dayExtremes": {
-    "low": 23347.3,
-    "lowTs": 1790061456427,
+    "low": 23329.05,
+    "lowTs": 1790061996329,
     "high": 23467.65,
     "highTs": 1790051978215
   }
