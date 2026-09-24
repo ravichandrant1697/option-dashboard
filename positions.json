@@ -1,39 +1,16 @@
 {
-  "date": "2026-09-23",
+  "date": "2026-09-24",
   "open": [],
-  "closedToday": [
-    {
-      "PosId": 1790145955968,
-      "Timestamp": "2026-09-23 12:15:55",
-      "ExitTime": "2026-09-23 14:12:40",
-      "Horizon": "intraday",
-      "Expiry": "2026-09-29",
-      "Strategy": "Buy Call",
-      "Legs": "BUY 23450CE",
-      "Lots": 1,
-      "NetEntry": 131.35,
-      "NetExit": 123.55,
-      "Result": "LOSS",
-      "ExitReason": "TIME_STOP",
-      "GrossPnL": -507,
-      "Charges": 63.17,
-      "PnL": -570.17,
-      "ExitMode": "scalp",
-      "RR": 3,
-      "Confidence": 100,
-      "EntryBias": "Bullish",
-      "TrendAtEntry": "Up"
-    }
-  ],
+  "closedToday": [],
   "biasStreak": {
-    "bias": "Bullish",
-    "count": 73
+    "bias": "Bearish",
+    "count": 2
   },
-  "dayOpenSpot": 23363.35,
+  "dayOpenSpot": 23253.45,
   "dayExtremes": {
-    "low": 23350.4,
-    "lowTs": 1790137492761,
-    "high": 23460.65,
-    "highTs": 1790146314466
+    "low": 23236.35,
+    "lowTs": 1790221713727,
+    "high": 23253.45,
+    "highTs": 1790221531752
   }
 }
