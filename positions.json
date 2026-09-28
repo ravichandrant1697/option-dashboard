@@ -1,44 +1,33 @@
 {
   "date": "2026-09-28",
-  "open": [
+  "open": [],
+  "closedToday": [
     {
-      "id": 1790585674990,
-      "openedAt": "2026-09-28 14:24:34",
-      "openedAtMs": 1790585674990,
-      "strategy": "Buy Put",
-      "legs": [
-        {
-          "strike": 22800,
-          "type": "PE",
-          "side": "BUY",
-          "instrument_key": "NSE_FO|73896"
-        }
-      ],
-      "lots": 1,
-      "netEntry": 72.95,
-      "stopDist": 7.295000000000001,
-      "targetDist": 21.885,
-      "lockDist": 5.836,
-      "lockDists": [
-        5.836,
-        7.295000000000001,
-        9.11875
-      ],
-      "exitMode": "scalp",
-      "estCharges": 56.07,
-      "confidence": 100,
-      "entryBias": "Bearish",
-      "trendAtEntry": "Down",
-      "horizon": "intraday",
-      "product": "I",
-      "expiry": "2026-09-29",
-      "_lockLevel": 9.11875
+      "PosId": 1790585674990,
+      "Timestamp": "2026-09-28 14:24:34",
+      "ExitTime": "2026-09-28 14:45:34",
+      "Horizon": "intraday",
+      "Expiry": "2026-09-29",
+      "Strategy": "Buy Put",
+      "Legs": "BUY 22800PE",
+      "Lots": 1,
+      "NetEntry": 72.95,
+      "NetExit": 79,
+      "Result": "WIN",
+      "ExitReason": "PROFIT_LOCK",
+      "GrossPnL": 393.25,
+      "Charges": 56.07,
+      "PnL": 337.18,
+      "ExitMode": "scalp",
+      "RR": 3,
+      "Confidence": 100,
+      "EntryBias": "Bearish",
+      "TrendAtEntry": "Down"
     }
   ],
-  "closedToday": [],
   "biasStreak": {
     "bias": "Bearish",
-    "count": 101
+    "count": 104
   },
   "dayOpenSpot": 22974.55,
   "dayExtremes": {
