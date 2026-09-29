@@ -130,16 +130,35 @@ if (mode === "backtest") {
     console.log("Connecting WebSocket...");
     connectStream();
 
-    console.log("Running first cycle...");
-    await run();
-
-    console.log(`Polling every ${CONFIG.pollMs / 1000} seconds...`);
-
-    setInterval(async () => {
-      console.log("--------------------------------");
-      console.log("Running next cycle...");
-      await run();
-    }, CONFIG.pollMs);
+    // Clock-aligned polling (2026-09-28): polls land on the 09:15 + k×3 min
+    // grid (09:15:00, 09:18:00 …) instead of "every 3 min from whenever the
+    // process booted". Started before the open → the first API call is at
+    // 09:15:00 sharp (the workflow boots the engine ~2 min early so contract
+    // resolution, the workbook load and the websocket are done by then).
+    // Started mid-session → poll now, then join the grid. setTimeout is
+    // re-armed after each poll, so a slow poll never stacks two cycles.
+    {
+      const { msUntilNextPoll, isBeforeOpen } = require("./clock");
+      const fmt = ms => `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+      const scheduleNext = () => {
+        const ms = msUntilNextPoll(CONFIG.pollMs);
+        setTimeout(async () => {
+          console.log("--------------------------------");
+          console.log("Running next cycle...");
+          try { await run(); } catch (e) { console.error("Cycle failed:", e.message); }
+          scheduleNext();
+        }, ms);
+        return ms;
+      };
+      if (isBeforeOpen()) {
+        console.log(`Before the open — first cycle at 09:15:00 IST (in ${fmt(msUntilNextPoll(CONFIG.pollMs))})`);
+        scheduleNext();
+      } else {
+        console.log("Running first cycle...");
+        await run();
+        console.log(`Next cycle on the 3-min grid in ${fmt(scheduleNext())}`);
+      }
+    }
 
     // Between-poll exit guard: price-only, fires only while a position is
     // open (engine.fastExitCheck). Entries stay on the 3-min chain poll.
@@ -204,16 +223,35 @@ if (mode === "backtest") {
     console.log("Loading tuning...");
     loadTuning();
 
-    console.log("Running first cycle...");
-    await run();
-
-    console.log(`Polling every ${CONFIG.pollMs / 1000} seconds...`);
-
-    setInterval(async () => {
-      console.log("--------------------------------");
-      console.log("Running next cycle...");
-      await run();
-    }, CONFIG.pollMs);
+    // Clock-aligned polling (2026-09-28): polls land on the 09:15 + k×3 min
+    // grid (09:15:00, 09:18:00 …) instead of "every 3 min from whenever the
+    // process booted". Started before the open → the first API call is at
+    // 09:15:00 sharp (the workflow boots the engine ~2 min early so contract
+    // resolution, the workbook load and the websocket are done by then).
+    // Started mid-session → poll now, then join the grid. setTimeout is
+    // re-armed after each poll, so a slow poll never stacks two cycles.
+    {
+      const { msUntilNextPoll, isBeforeOpen } = require("./clock");
+      const fmt = ms => `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+      const scheduleNext = () => {
+        const ms = msUntilNextPoll(CONFIG.pollMs);
+        setTimeout(async () => {
+          console.log("--------------------------------");
+          console.log("Running next cycle...");
+          try { await run(); } catch (e) { console.error("Cycle failed:", e.message); }
+          scheduleNext();
+        }, ms);
+        return ms;
+      };
+      if (isBeforeOpen()) {
+        console.log(`Before the open — first cycle at 09:15:00 IST (in ${fmt(msUntilNextPoll(CONFIG.pollMs))})`);
+        scheduleNext();
+      } else {
+        console.log("Running first cycle...");
+        await run();
+        console.log(`Next cycle on the 3-min grid in ${fmt(scheduleNext())}`);
+      }
+    }
 
     // Between-poll exit guard: price-only, fires only while a position is
     // open (engine.fastExitCheck). Entries stay on the 3-min chain poll.

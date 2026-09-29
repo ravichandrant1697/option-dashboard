@@ -50,6 +50,31 @@ function pastIST(hhmm) {
   return d.getHours() * 60 + d.getMinutes() >= h * 60 + m;
 }
 
+// Milliseconds until the next poll slot on a clock-aligned grid: slots are
+// 09:15:00 IST + k × stepMs (09:15, 09:18, 09:21 … at the default 3 min).
+// Before 09:15 the answer is the wait until 09:15:00 exactly — so a session
+// triggered at 09:12 makes its FIRST API call at the open, not at 09:15:xx
+// plus boot time, and every later poll stays on the grid instead of
+// drifting with whenever the process happened to start (2026-09-28).
+function msUntilNextPoll(stepMs, openHM = "09:15") {
+  const [oh, om] = openHM.split(":").map(Number);
+  const d = nowIST();
+  const secOfDay = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
+  const open = oh * 3600 + om * 60;
+  const step = Math.max(1, Math.round(stepMs / 1000));
+  let next = open;
+  if (secOfDay >= open) next = open + (Math.floor((secOfDay - open) / step) + 1) * step;
+  return Math.max(1000, (next - secOfDay) * 1000);
+}
+
+// True before the 09:15 IST open (any weekday/weekend — callers gate on
+// isMarketOpen separately).
+function isBeforeOpen(openHM = "09:15") {
+  const [oh, om] = openHM.split(":").map(Number);
+  const d = nowIST();
+  return d.getHours() * 60 + d.getMinutes() < oh * 60 + om;
+}
+
 // Whole calendar days from today (IST) until dateStr ("YYYY-MM-DD").
 // Negative = already past. Used by the multi-day horizons for the
 // days-to-expiry (DTE) entry gate and the EXPIRY_STOP exit.
@@ -66,6 +91,8 @@ module.exports = {
   isMarketOpen,
   isSquareOffTime,
   pastIST,
-  daysUntil
+  daysUntil,
+  msUntilNextPoll,
+  isBeforeOpen
 };
 //clock.js
