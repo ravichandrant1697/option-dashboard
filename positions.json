@@ -1,83 +1,16 @@
 {
-  "date": "2026-10-01",
+  "date": "2026-10-05",
   "open": [],
-  "closedToday": [
-    {
-      "PosId": 1790836921553,
-      "Timestamp": "2026-10-01 12:12:01",
-      "ExitTime": "2026-10-01 12:24:42",
-      "Horizon": "intraday",
-      "Expiry": "2026-10-06",
-      "Strategy": "Buy Put",
-      "Legs": "BUY 22500PE",
-      "Lots": 1,
-      "NetEntry": 113.05,
-      "NetExit": 125.2,
-      "Result": "WIN",
-      "ExitReason": "PROFIT_LOCK",
-      "GrossPnL": 789.75,
-      "Charges": 60.95,
-      "PnL": 728.8,
-      "ExitMode": "scalp",
-      "RR": 3,
-      "Confidence": 100,
-      "EntryBias": "Bearish",
-      "TrendAtEntry": "Down"
-    },
-    {
-      "PosId": 1790839621829,
-      "Timestamp": "2026-10-01 12:57:01",
-      "ExitTime": "2026-10-01 13:02:29",
-      "Horizon": "intraday",
-      "Expiry": "2026-10-06",
-      "Strategy": "Buy Put",
-      "Legs": "BUY 22350PE",
-      "Lots": 1,
-      "NetEntry": 154.35,
-      "NetExit": 132.4,
-      "Result": "LOSS",
-      "ExitReason": "STOP",
-      "GrossPnL": -1426.75,
-      "Charges": 65.97,
-      "PnL": -1492.72,
-      "ExitMode": "scalp",
-      "RR": 3,
-      "Confidence": 100,
-      "EntryBias": "Bearish",
-      "TrendAtEntry": "Down"
-    },
-    {
-      "PosId": 1790842688682,
-      "Timestamp": "2026-10-01 13:48:08",
-      "ExitTime": "2026-10-01 14:03:01",
-      "Horizon": "intraday",
-      "Expiry": "2026-10-06",
-      "Strategy": "Buy Put",
-      "Legs": "BUY 22300PE",
-      "Lots": 1,
-      "NetEntry": 135.55,
-      "NetExit": 177,
-      "Result": "WIN",
-      "ExitReason": "TARGET",
-      "GrossPnL": 2694.25,
-      "Charges": 63.68,
-      "PnL": 2630.57,
-      "ExitMode": "scalp",
-      "RR": 3,
-      "Confidence": 100,
-      "EntryBias": "Bearish",
-      "TrendAtEntry": "Down"
-    }
-  ],
+  "closedToday": [],
   "biasStreak": {
-    "bias": "Bearish",
-    "count": 127
+    "bias": "Bullish",
+    "count": 1
   },
-  "dayOpenSpot": 22546.6,
+  "dayOpenSpot": 22542.9,
   "dayExtremes": {
-    "low": 22222.8,
-    "lowTs": 1790843581505,
-    "high": 22601.95,
-    "highTs": 1790829361218
+    "low": 22542.9,
+    "lowTs": 1791171922319,
+    "high": 22562.2,
+    "highTs": 1791172080641
   }
 }
