@@ -552,6 +552,10 @@ async function openPosition(result, plan) {
   // Live mode: fire the real entry orders (paper journal runs regardless)
   await executeLegs(pos, true);
 
+  // Stream the legs for tick-level exits (lazy require: stream ↔ trade
+  // would otherwise be a load-order cycle). Stream down → no-op.
+  try { require("./stream").subscribe(pos.legs.map(l => l.instrument_key)); } catch { /* stream optional */ }
+
   // Telegram entry alert — labeled block (see alertHeader/levelLines).
   // Levels are NET-PREMIUM prices, same convention as the sheet.
   await notify(
@@ -614,6 +618,7 @@ async function closePosition(pos, netNow, outcome, reason) {
   const state = getState();
   state.open = state.open.filter(p => p.id !== pos.id);
   state.closedToday.push(trade);
+  try { require("./stream").unsubscribe(pos.legs.map(l => l.instrument_key)); } catch { /* stream optional */ }
 
   // Update the entry's OPEN row in place; append only if it is missing.
   const openRow = SHEETS.Trades.find(r => r.PosId === pos.id);

@@ -13,6 +13,7 @@ const { analyze, maybeRefreshCandleTrend, updateFuturesBuildup } = require("./si
 const { buildTradePlan, openPosition, closePosition } = require("./trade");
 const { getNetPremium, checkExit } = require("./pricing");
 const { getState, rollStateIfNewDay, saveState, canOpen, trackBiasStreak, trackDayOpen, trackDayExtremes } = require("./state");
+const stream = require("./stream"); // 2026-10-07: V3 protobuf feed — tick-level exits between polls
 const { appendRow, dashboardSheetName, toDashboardRow } = require("./workbook");
 const { maybeRefreshPortfolio, maybeRefreshPositions } = require("./portfolio");
 const { tuning, runTuning } = require("./tuning");
@@ -139,6 +140,11 @@ async function run() {
     console.log("Building trade plan...");
 
     const plan = await buildTradePlan(result, chain);
+
+    // Stream the plan's legs (rotated each poll) so a position opened from
+    // this plan has live ticks from its first second; open positions' legs
+    // are subscribed by trade.openPosition and never dropped here.
+    stream.syncPlanKeys((plan?.legs || []).map(l => l.instrument_key));
 
     // AFTER the plan: the day-extreme retest gate must compare this poll's
     // spot against the PREVIOUS polls' low/high, never against itself.
@@ -289,6 +295,11 @@ async function fastExitCheck() {
 
   for (const pos of [...state.open]) {
     if (runtime.closingIds.has(pos.id)) continue;
+    // Live ticks for every leg → the stream sweep owns this position's exits
+    // (tick-level, with the 5-s PROFIT_LOCK confirmation); this 5-s quote
+    // check stands down rather than pre-empting the confirmation window.
+    // Ticks stale or socket down → it takes over again, unchanged.
+    if (stream.hasFreshTicks(pos.legs)) continue;
 
     const keys = pos.legs.map(l => l.instrument_key).filter(Boolean);
     if (keys.length !== pos.legs.length) continue; // unpriceable — the poll handles it
