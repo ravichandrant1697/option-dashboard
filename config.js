@@ -186,6 +186,15 @@ const RULES = {
   freshBreakOnly: true,
   freshBreakMaxRun: 3,
   freshBreakMaxMovePct: 0.0015,
+  // Tick entries (2026-10-07, user: "no wait"): between the 3-min chain
+  // polls, every streamed spot tick re-runs the trade plan (same gates,
+  // same bias/chain as the last poll, spot = the tick) and opens the
+  // position the moment a fresh break passes — instead of buying the
+  // aftermath at the next poll (10-07 13:12 @144 after a 166 print at
+  // 13:09–13:12). Needs the WebSocket; polling-only sessions are unchanged.
+  // tickEntryMinGapMs throttles the re-plan; false = poll entries only.
+  tickEntry: true,
+  tickEntryMinGapMs: 2000,
   // Scalp time stop (2026-09-11): a scalp/naked position that has armed NO
   // profit-lock rung within this many minutes exits TIME_STOP — Range drift
   // is not a SIGNAL_CHANGE and intraday has no maxHoldDays, so the 10 Sep

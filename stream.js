@@ -158,6 +158,18 @@ function onMessage(raw) {
   lastTickAt = Date.now();
   if ((ticksSeen += n) <= n) log(`first ticks received (${n} key(s))`);
   streamExitSweep();
+  streamEntrySweep();
+}
+
+// Tick entries (2026-10-07): hand the latest spot tick to engine.tickEntryCheck,
+// which re-plans between polls. Uses the engine module only if the session
+// already loaded it (never loads it here — stream-test.js stays feed-only,
+// and engine ↔ stream would be a load-order cycle).
+function streamEntrySweep() {
+  let engine = null;
+  try { engine = require.cache[require.resolve("./engine")]?.exports || null; } catch { /* no engine in this process */ }
+  if (!engine || typeof engine.tickEntryCheck !== "function") return;
+  engine.tickEntryCheck().catch(e => log(`tick entry failed: ${e.message}`));
 }
 
 function scheduleReconnect() {

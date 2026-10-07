@@ -11,14 +11,14 @@ const { isMarketOpen, isSquareOffTime, pastIST, todayIST, istTimestamp } = requi
 const { fetchMarketData, fetchQuotes } = require("./upstox-api");
 const { analyze, maybeRefreshCandleTrend, updateFuturesBuildup } = require("./signals");
 const { buildTradePlan, openPosition, closePosition } = require("./trade");
-const { getNetPremium, checkExit } = require("./pricing");
+const { getNetPremium, checkExit, exitLevels } = require("./pricing");
 const { getState, rollStateIfNewDay, saveState, canOpen, trackBiasStreak, trackDayOpen, trackDayExtremes } = require("./state");
 const stream = require("./stream"); // 2026-10-07: V3 protobuf feed — tick-level exits between polls
 const { appendRow, dashboardSheetName, toDashboardRow } = require("./workbook");
 const { maybeRefreshPortfolio, maybeRefreshPositions } = require("./portfolio");
 const { tuning, runTuning } = require("./tuning");
 const { getActiveHorizon } = require("./horizons");
-const { CONFIG } = require("./config");
+const { CONFIG, RULES } = require("./config");
 const runtime = require("./runtime");
 
 async function run() {
@@ -122,6 +122,7 @@ async function run() {
     console.log("Spot:", result.spot);
 
     runtime.setLastResult(result); // the stream exit sweep reuses this
+    runtime.setLastChain(chain);   // tick entries re-plan on this chain with the live spot
 
     // Roll the day BEFORE the plan is built: the same-legs and entry-
     // persistence gates read state and must see TODAY's, not yesterday's
@@ -216,9 +217,12 @@ async function run() {
 
       if (blocked) {
         console.log("Entry blocked:", blocked);
+      } else if (runtime.isEntryInFlight()) {
+        console.log("Entry skipped: a tick entry is in flight");
       } else {
         console.log("Opening position...");
-        await openPosition(result, plan);
+        runtime.setEntryInFlight(true);
+        try { await openPosition(result, plan); } finally { runtime.setEntryInFlight(false); }
       }
 
     } else if (plan && plan.lots < 1) {
@@ -330,4 +334,66 @@ async function fastExitCheck() {
   }
 }
 
-module.exports = { run, fastExitCheck };
+// TICK ENTRY — "no wait" (2026-10-07). Entries used to exist only on the
+// 3-min chain poll, so a break that happened at 13:09:30 was bought at the
+// 13:12 poll — after the premium had already spiked (166) and come back
+// (144). With the stream connected, every spot tick of the underlying
+// re-runs the SAME trade plan the poll would build (same bias, same chain,
+// same gates — fresh break, chase checks, window, VWAP, volume, cost
+// floor …), with the tick as the spot, and opens the position the moment
+// it passes. The legs are re-priced from their live ticks when all of them
+// are fresh, so the journal shows the real entry premium, not the chain's
+// 3-min-old one. Nothing here touches the sheet row cadence or the OI
+// signal: the bias still comes from the last poll.
+//
+// Cheap by construction: no API call unless every gate has passed (the
+// depth gate inside buildTradePlan fetches bid/ask only then), state-only
+// canOpen checks run first, re-plans are throttled (tickEntryMinGapMs) and
+// skipped while the spot is unchanged. One entry path at a time: the
+// entryInFlight lock is shared with the poll's entry branch. Block reasons
+// are logged only when they change, so the log stays readable.
+let lastTickEntryAt = 0;
+let lastTickEntrySpot = null;
+let lastTickBlock = null;
+async function tickEntryCheck() {
+  if (!RULES.tickEntry) return;
+  const now = Date.now();
+  if (now - lastTickEntryAt < (RULES.tickEntryMinGapMs || 2000)) return;
+  const state = getState();
+  if (state.open.length || runtime.isEntryInFlight()) return;
+  if (!isMarketOpen() && !process.env.FORCE_RUN) return;
+  if (getActiveHorizon().squareOff && isSquareOffTime()) return;
+  const result = runtime.getLastResult(), chain = runtime.getLastChain();
+  if (!result || !chain || (result.bias !== "Bullish" && result.bias !== "Bearish")) return;
+  const tick = runtime.liveTicks.get(CONFIG.instrumentKey);
+  if (!tick || tick.ltp == null || now - tick.at > 15000) return;
+  if (tick.ltp === lastTickEntrySpot) return;               // nothing new to evaluate
+  lastTickEntryAt = now; lastTickEntrySpot = tick.ltp;
+  if (canOpen()) return;                                     // cooldown / max trades / daily loss — state only, no plan needed
+
+  const res = { ...result, spot: tick.ltp };
+  const plan = await buildTradePlan(res, chain);
+  const block = !plan ? "no plan" : plan.blocked ? plan.blocked : plan.lots < 1 ? "lots < 1" : null;
+  if (block) {
+    if (block !== lastTickBlock) { console.log(`⚡ tick entry (spot ${tick.ltp}): ${block}`); lastTickBlock = block; }
+    return;
+  }
+  lastTickBlock = null;
+  // Live entry premium: every leg has a fresh tick → use it (and re-derive
+  // the stop / target / lock ladder from it); otherwise keep the chain price.
+  if (stream.hasFreshTicks(plan.legs)) {
+    const net = stream.netFromTicks(plan.legs);
+    if (net != null && net > 0) Object.assign(plan, { netEntry: net }, exitLevels(net, plan.exitMode, plan.legs.length === 1));
+  }
+  if (runtime.isEntryInFlight() || getState().open.length) return; // the poll got there first
+  runtime.setEntryInFlight(true);
+  try {
+    console.log(`⚡ TICK ENTRY — spot ${tick.ltp} passed every gate between polls (bias ${result.bias} from the ${result.timestamp} poll)`);
+    await openPosition(res, plan);
+    saveState();
+  } finally {
+    runtime.setEntryInFlight(false);
+  }
+}
+
+module.exports = { run, fastExitCheck, tickEntryCheck };

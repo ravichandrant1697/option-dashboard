@@ -23,6 +23,8 @@ let vwapRef = null;
 let volumeSurge = null;
 let futuresBuildup = null;
 let lastResult = null;
+let lastChain = null;      // written by engine.run every poll — the chain lastResult came from (tick entries re-plan on it)
+let entryInFlight = false; // claimed while openPosition runs (poll or tick) — one entry path at a time
 let liveTrading = false;
 
 // Latest streamed tick per instrument key: { ltp, cp, greeks, at }.
@@ -45,6 +47,10 @@ module.exports = {
   setFuturesBuildup: v => { futuresBuildup = v; },
   getLastResult: () => lastResult,
   setLastResult: v => { lastResult = v; },
+  getLastChain: () => lastChain,
+  setLastChain: v => { lastChain = v; },
+  isEntryInFlight: () => entryInFlight,
+  setEntryInFlight: v => { entryInFlight = !!v; },
   isLiveTrading: () => liveTrading,
   setLiveTrading: v => { liveTrading = !!v; },
   liveTicks,
