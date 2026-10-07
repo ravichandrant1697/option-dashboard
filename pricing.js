@@ -10,6 +10,7 @@ const {
   SCALP_TARGET_PCT,
   SCALP_STOP_PCT,
   SCALP_LOCK_PCTS,
+  SCALP_LOCK_POINTS,
   MAX_RISK,
   LOT_SIZE,
   MAX_LOTS,
@@ -80,9 +81,18 @@ function exitLevels(netEntry, mode = "default", nakedLeg = false) {
     mode === "ride" ? null :
     mode === "scalp" ? scalpTarget :
     stopDist * RISK_REWARD;
+  // 2026-10-06: the % ladder plus an optional ABSOLUTE first rung
+  // (SCALP_LOCK_POINTS — SBIN ₹1 / NIFTY 10 / SENSEX 30 premium points),
+  // merged, sorted ascending and de-duplicated so checkExit's "highest
+  // rung seen" walk stays monotonic whichever rung is lowest for this
+  // premium. A config without SCALP_LOCK_POINTS → % ladder only.
   const lockDists =
     mode === "scalp"
-      ? [...SCALP_LOCK_PCTS].sort((a, b) => a - b).map(p => Math.abs(netEntry) * p)
+      ? [...new Set(
+          [...SCALP_LOCK_PCTS.map(p => Math.abs(netEntry) * p),
+           ...(SCALP_LOCK_POINTS > 0 ? [SCALP_LOCK_POINTS] : [])]
+            .map(d => Number(d.toFixed(4)))
+        )].sort((a, b) => a - b)
       : null;
   const lockDist = lockDists ? lockDists[0] : null;
   return { stopDist, targetDist, lockDist, lockDists };

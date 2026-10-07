@@ -21,7 +21,14 @@ const { todayIST, nowIST } = require("./clock");
 // set — the day-extreme retest gate (RULES.extremeRetestPct) reads it.
 // Updated AFTER the plan is built, so a poll never sees its own spot as
 // the extreme. Persisted like dayOpenSpot.
-let state = { date: todayIST(), open: [], closedToday: [], biasStreak: { bias: null, count: 0 }, dayOpenSpot: null, dayExtremes: null };
+// extremeRun = how many consecutive PREVIOUS polls each printed a new day
+// extreme, and in which direction (-1 new lows, +1 new highs) — the
+// fresh-break gate's chase check (RULES.freshBreakMaxRun) adds the current
+// poll on top. prevSpot/prevSpotTs = the previous poll's spot, for the
+// gate's last-poll move check (RULES.freshBreakMaxMovePct). Both updated
+// with dayExtremes, after the plan; persisted so the afternoon session
+// continues the morning's count.
+let state = { date: todayIST(), open: [], closedToday: [], biasStreak: { bias: null, count: 0 }, dayOpenSpot: null, dayExtremes: null, extremeRun: { dir: 0, count: 0 }, prevSpot: null, prevSpotTs: null };
 
 // Always fetch fresh — the object is REPLACED on day roll / recovery.
 function getState() {
@@ -48,7 +55,7 @@ function initState() {
 function rollStateIfNewDay() {
   const today = todayIST();
   if (state.date !== today) {
-    state = { date: today, open: state.open, closedToday: [], biasStreak: { bias: null, count: 0 }, dayOpenSpot: null, dayExtremes: null };
+    state = { date: today, open: state.open, closedToday: [], biasStreak: { bias: null, count: 0 }, dayOpenSpot: null, dayExtremes: null, extremeRun: { dir: 0, count: 0 }, prevSpot: null, prevSpotTs: null };
   }
 }
 
@@ -59,6 +66,20 @@ function trackDayExtremes(spot) {
   if (!Number.isFinite(spot) || spot <= 0) return state.dayExtremes;
   const now = Date.now();
   const e = state.dayExtremes ?? (state.dayExtremes = { low: null, lowTs: null, high: null, highTs: null });
+  // Fresh-break bookkeeping (2026-10-06), judged against the extremes BEFORE
+  // this poll updates them — the same comparison the gate just made. A poll
+  // at/through the previous low extends a -1 run, at/through the previous
+  // high a +1 run, anything else (or the first poll of the day) resets it.
+  // Older positions.json files lack these fields — defaulted in place.
+  const run = state.extremeRun ?? (state.extremeRun = { dir: 0, count: 0 });
+  const newLow = e.low != null && spot <= e.low;
+  const newHigh = e.high != null && spot >= e.high;
+  const dir = newLow && !newHigh ? -1 : newHigh && !newLow ? 1 : 0;
+  if (dir === 0) { run.dir = 0; run.count = 0; }
+  else if (run.dir === dir) run.count++;
+  else { run.dir = dir; run.count = 1; }
+  state.prevSpot = spot;
+  state.prevSpotTs = now;
   if (e.low == null || spot < e.low) { e.low = spot; e.lowTs = now; }
   if (e.high == null || spot > e.high) { e.high = spot; e.highTs = now; }
   return e;

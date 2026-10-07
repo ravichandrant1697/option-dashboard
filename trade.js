@@ -37,6 +37,38 @@ function legsSummary(legs) {
   return legs.map(l => `${l.side} ${l.strike}${l.type}`).join(" | ");
 }
 
+// Fresh-break entry gate (2026-10-06) — pure, so it can be replayed on
+// sheet rows. The day's only live edge is entry LOCATION: since 09-11,
+// entries AT/THROUGH the day extreme made +₹4,931 (26 trades, 58 %) while
+// entries inside the range lost ₹10,062 (23 trades, 35 %); the stops were
+// the chases — the 4th+ consecutive new-extreme poll (09-22 10:42/10:46,
+// 10-01 12:57/13:00) or a > 0.15 % jump in the last poll. Three checks:
+//   fresh  spot ≤ previous polls' day low (Bearish) / ≥ day high (Bullish)
+//   run    consecutive new-extreme polls INCLUDING this one ≤ maxRun
+//   calm   last-poll spot move in the trade direction < maxMovePct
+// `st` is the engine state BEFORE this poll's trackDayExtremes (extremes,
+// extremeRun and prevSpot all describe the previous polls). A stale
+// prevSpot (> 10 min, e.g. the first poll after the 12:17 restart) counts
+// as no move, the way the replay treated the first poll. Returns the
+// block reason, or null to let the entry through. Range is exempt.
+function freshBreakBlock(bias, spot, st, rules = RULES) {
+  if (!rules.freshBreakOnly || bias === "Range" || !Number.isFinite(spot)) return null;
+  const dir = bias === "Bearish" ? -1 : 1;
+  const ext = st.dayExtremes;
+  const level = dir < 0 ? ext?.low : ext?.high;
+  const fresh = level != null && (dir < 0 ? spot <= level : spot >= level);
+  if (!fresh) return `bias ${bias} inside the day range (spot ${spot}, day ${dir < 0 ? "low" : "high"} ${level ?? "n/a"}) — not a fresh break`;
+  const prevRun = st.extremeRun && st.extremeRun.dir === dir ? st.extremeRun.count : 0;
+  const run = prevRun + 1;
+  if (rules.freshBreakMaxRun && run > rules.freshBreakMaxRun)
+    return `chasing: ${run} consecutive new-${dir < 0 ? "low" : "high"} polls > ${rules.freshBreakMaxRun}`;
+  const prevFresh = Number.isFinite(st.prevSpot) && st.prevSpot > 0 && st.prevSpotTs && Date.now() - st.prevSpotTs <= 10 * 60000;
+  const movePct = prevFresh ? (spot - st.prevSpot) / spot * dir : 0;
+  if (rules.freshBreakMaxMovePct && movePct >= rules.freshBreakMaxMovePct)
+    return `chasing: last-poll move ${(movePct * 100).toFixed(2)}% ≥ ${(rules.freshBreakMaxMovePct * 100).toFixed(2)}% in the trade direction`;
+  return null;
+}
+
 // ---- Telegram alert format (2026-09-05, user-specified) -----------------
 // Entry and exit share one labeled block:
 //   Strategy Name / Index or Stock / Strike / Premium / Profit Lock1..3 /
@@ -59,17 +91,17 @@ function premiumLabel(net) {
   return `${Math.abs(net).toFixed(2)}${net < 0 ? " (credit)" : ""}`;
 }
 
-// The three Profit Lock lines + Stop Loss + Target, as NET-PREMIUM prices.
+// The Profit Lock lines (one per rung — three for the % ladder, four when
+// the absolute SCALP_LOCK_POINTS rung is on; never fewer than three so the
+// block shape is stable) + Stop Loss + Target, as NET-PREMIUM prices.
 // Ride mode (no ladder/target) prints "—" for the locks and "Signal
-// reversal" as the target so the block shape never changes.
+// reversal" as the target.
 function levelLines(pos) {
   const rungs = pos.lockDists ?? (pos.lockDist != null ? [pos.lockDist] : []);
   const lockLine = i =>
     `Profit Lock${i + 1} : ${rungs[i] != null ? (pos.netEntry + rungs[i]).toFixed(2) : "—"}`;
   return [
-    lockLine(0),
-    lockLine(1),
-    lockLine(2),
+    ...Array.from({ length: Math.max(3, rungs.length) }, (_, i) => lockLine(i)),
     `Stop Loss : ${(pos.netEntry - pos.stopDist).toFixed(2)}`,
     `Target : ${pos.targetDist != null ? (pos.netEntry + pos.targetDist).toFixed(2) : "Signal reversal"}`
   ].join("\n");
@@ -260,6 +292,17 @@ async function buildTradePlan(result, chain) {
       blocked = `bias Bullish retests day high ${ext.high} set ${Math.round(ageMin(ext.highTs))} min ago (spot ${spot})`;
     }
     if (blocked) console.log(`⛔ ENTRY gate (day-extreme retest): ${blocked} — signal still logged`);
+  }
+
+  // Execution gate (fresh break, 2026-10-06): see freshBreakBlock above —
+  // location + two chase checks, all from state the engine already keeps.
+  // Replay 09-11→10-06 (46 bot-days): as-ran −₹2,180 → +₹13.1k, stops 16 → 7.
+  if (!blocked) {
+    const fb = freshBreakBlock(result.bias, result.spot, getState());
+    if (fb) {
+      blocked = fb;
+      console.log(`⛔ ENTRY gate (fresh break): ${blocked} — signal still logged`);
+    }
   }
 
   // Execution gate (volume surge): a directional move without volume was
@@ -594,4 +637,4 @@ async function closePosition(pos, netNow, outcome, reason) {
   runtime.closingIds.delete(pos.id);
 }
 
-module.exports = { executeLegs, buildTradePlan, openPosition, closePosition };
+module.exports = { executeLegs, buildTradePlan, openPosition, closePosition, freshBreakBlock };

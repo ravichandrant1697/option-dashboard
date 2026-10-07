@@ -35,8 +35,11 @@ const CONFIG = {
   portfolioRefreshMs: 15 * 60000, // snapshot long-term holdings every 15 min
   positionsRefreshMs: 5 * 60000,  // snapshot broker F&O positions every 5 min
   candleRefreshMs: 5 * 60000,     // refresh the 5-minute candle trend every 5 min
-  fastExitMs: 45000,              // between-poll exit check (0 = off) — price-only,
-                                  // one quote call, and only while a position is open
+  fastExitMs: 5000,               // between-poll exit check (0 = off) — price-only,
+                                  // one quote call, and only while a position is open.
+                                  // 2026-10-06: 45 s → 5 s — live stops filled at −12.1 %
+                                  // avg vs the −10 % rule and locks below the rung (≈ ₹100
+                                  // slippage per trade); 12 quote calls/min per open position
   wsUrl: process.env.UPSTOX_WS_URL || "" // WebSocket stream URL (optional)
 };
 
@@ -92,7 +95,13 @@ const SCALP_STOP_PCT = 0.10;
 // that saw +11% and turns exits at +10%, not at the +12.5% it never reached
 // and not back at the stop. Keep the array sorted ascending.
 const SCALP_LOCK_PCTS = [0.08, 0.10, 0.125];
-const SCALP_LOCK_PCT = SCALP_LOCK_PCTS[0]; // first rung — kept for older callers
+// 2026-10-06: an ABSOLUTE first rung in premium points, merged into the %
+// ladder (pricing.exitLevels sorts + dedupes). With the 5-s fast exit a
+// 10-pt rise on a ~₹130 NIFTY weekly premium (≈ 6–9 %) arms a floor at
+// +10 — ₹650 gross on the lot — so a move that stalls short of the 8 %
+// rung still banks instead of round-tripping to the stop. 0 = off.
+const SCALP_LOCK_POINTS = 10;
+const SCALP_LOCK_PCT = SCALP_LOCK_PCTS[0]; // first % rung — kept for older callers
 
 // Naked long options (Buy Call / Buy Put). History: 0 wins in 8 trades,
 // −₹5,133 across both journals under the OLD gates. Re-enabled 2026-08-20
@@ -157,14 +166,26 @@ const TUNING_REGIME_START = "2026-09-05";
 
 const RULES = {
   minConfidence: 70,          // trade filter: below this → NO TRADE
-  // Entry window (2026-09-11), IST. No NEW entries before 10:00 — the first
-  // volume-surge reading (09:45) compares the opening candle against five
-  // others and always looks like a surge (10 Sep SENSEX 09:45: −₹1,317) —
-  // and none after 14:50 (< 30 min to the square-off; 9 Sep NIFTY 15:06:
-  // charges only). Replay showed SENSEX's 14:35/14:52 entries were its
-  // best, so the cap is 14:50, not 14:30. Exits are never gated by this.
-  entryStartHour: 10, entryStartMin: 0,
-  entryEndHour: 14, entryEndMin: 50,
+  // Entry window, IST (2026-09-11: 10:00–14:50; 2026-10-06, user: widened to
+  // 09:30–15:10 — the fresh-break gate below now carries the chop filtering
+  // the clock used to do). Replay 09-11→10-06 under that gate: 09:30–15:10
+  // +₹13.1k / 30 trades vs 10:00–14:50 +₹13.2k / 26 — the extra half-hours
+  // added four trades for −₹82 net; a 15:0x entry has ~10 min before the
+  // 15:20 square-off. Exits are never gated by this.
+  entryStartHour: 9, entryStartMin: 30,
+  entryEndHour: 15, entryEndMin: 10,
+  // Fresh-break entry gate (2026-10-06): a directional entry only AT or
+  // THROUGH the day extreme in its direction (spot ≤ the previous polls' day
+  // low for a put, ≥ the day high for a call), not on the 4th+ consecutive
+  // new-extreme poll (freshBreakMaxRun) and not after a last-poll jump of
+  // ≥ freshBreakMaxMovePct in the trade direction — both are chases that
+  // stop out (09-22 10:42/10:46, 10-01 12:57/13:00). Live since 09-11:
+  // fresh-break entries +₹4,931 (26 trades, 58 %), inside-range entries
+  // −₹10,062 (23 trades, 35 %). Replay: as-ran −₹2,180 → +₹13.1k, stops
+  // 16 → 7. Range bias is exempt (never trades naked anyway). false = off.
+  freshBreakOnly: true,
+  freshBreakMaxRun: 3,
+  freshBreakMaxMovePct: 0.0015,
   // Scalp time stop (2026-09-11): a scalp/naked position that has armed NO
   // profit-lock rung within this many minutes exits TIME_STOP — Range drift
   // is not a SIGNAL_CHANGE and intraday has no maxHoldDays, so the 10 Sep
@@ -185,10 +206,14 @@ const RULES = {
   extremeRetestAgeMin: 30,
   // Entry-side persistence: the CURRENT bias must have held for this many
   // consecutive polls (including this one) before any entry is allowed.
-  // 3 polls = ~9 min of agreement at the 3-min cadence. On the SBIN
-  // sheets (Aug 18–20) the bias flipped on 59% of polls; persistence-3
-  // Bearish signals hit 66–69% at the ~60-min horizon vs ~50% unfiltered.
-  entryBiasPersistence: 3,
+  // Built for the Aug chop (bias flipped on 59% of polls); since the 09-08
+  // build-up fix it flips on 4–5% of polls, so 3 polls bought nothing but a
+  // 9-minute lag — entries landed at the END of the move (10-05 13:48: all
+  // three bots bought six minutes after the 13:42 spike). 2026-10-06 (user):
+  // 3 → 1 = gate off; the fresh-break gate carries the chop filtering.
+  // Replay under that gate: persistence 3 +₹13.1k/30 trades, 2 +₹13.7k/33,
+  // 1 +₹14.4k/35 (adds 3 first-poll winners and 3 stops, drops 1 stop).
+  entryBiasPersistence: 1,
   maxOpenPositions: 1,
   maxDailyLoss: MAX_RISK,     // one full-risk loss ends the day
   maxConsecutiveLosses: 3,    // 3 losses in a row → done for the day
@@ -262,6 +287,7 @@ module.exports = {
   SCALP_STOP_PCT,
   SCALP_LOCK_PCT,
   SCALP_LOCK_PCTS,
+  SCALP_LOCK_POINTS,
   BLOCK_NAKED_LEGS,
   NAKED_ONLY,
   NAKED_MIN_SCORE,
