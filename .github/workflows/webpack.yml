@@ -1,20 +1,25 @@
 name: Option Dashboard Trading Session
 
 on:
-  workflow_dispatch:
-  schedule:
-    # GitHub cron is UTC and BEST-EFFORT — triggers fire 15-60+ min late or
-    # get DROPPED entirely under load (observed: mornings first polling at
-    # 12:29 / 12:56 IST, afternoon halves never firing on Aug 12/13/28).
-    # Redundant staggered triggers give several chances per half; the run
-    # step's gates (wait-for-09:15, exit-past-close, IST-based session
-    # halves) plus the concurrency group make duplicates safe and
-    # self-terminating, so extra firings cost nothing.
-    - cron: "25 3 * * 1-5"   # 08:55 IST — morning primary; engine gated to 09:15
-    - cron: "45 3 * * 1-5"   # 09:15 IST — morning backup if primary dropped
-    - cron: "5 4 * * 1-5"    # 09:35 IST — morning last resort
-    - cron: "47 6 * * 1-5"   # 12:17 IST — afternoon relay (queues behind morning)
-    - cron: "15 7 * * 1-5"   # 12:45 IST — afternoon backup
+  workflow_dispatch:
+    inputs:
+      stream_test:
+        description: "Only test the Upstox WebSocket feed for 30 s — no trading (needs market hours for ticks)"
+        type: boolean
+        default: false
+  schedule:
+    # GitHub cron is UTC and BEST-EFFORT — triggers fire 15-60+ min late or
+    # get DROPPED entirely under load (observed: mornings first polling at
+    # 12:29 / 12:56 IST, afternoon halves never firing on Aug 12/13/28).
+    # Redundant staggered triggers give several chances per half; the run
+    # step's gates (wait-for-09:15, exit-past-close, IST-based session
+    # halves) plus the concurrency group make duplicates safe and
+    # self-terminating, so extra firings cost nothing.
+    - cron: "25 3 * * 1-5"   # 08:55 IST — morning primary; engine gated to 09:15
+    - cron: "45 3 * * 1-5"   # 09:15 IST — morning backup if primary dropped
+    - cron: "5 4 * * 1-5"    # 09:35 IST — morning last resort
+    - cron: "47 6 * * 1-5"   # 12:17 IST — afternoon relay (queues behind morning)
+    - cron: "15 7 * * 1-5"   # 12:45 IST — afternoon backup
 
 # 2026-10-06: nothing is pushed back to the repository any more. The journal
 # (option_dashboard.xlsx) and the engine state (positions.json, tuning.json)
@@ -22,188 +27,201 @@ on:
 # Telegram after the closing half — the repo is public, so no result data
 # is committed.
 permissions:
-  contents: read
+  contents: read
 
 concurrency:
-  group: trading
-  cancel-in-progress: false
+  group: trading
+  cancel-in-progress: false
 
 jobs:
-  session:
-    runs-on: ubuntu-latest
-    environment: production
-    timeout-minutes: 300
+  session:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 300
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
 
-      - name: Install dependencies
-        run: npm ci || npm install
+      - name: Install dependencies
+        run: npm ci || npm install
 
-      # ==========================================
-      # TEST GITHUB ENVIRONMENT SECRETS
-      # ==========================================
-      - name: Test GitHub Secrets
-        env:
-          UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: |
-          echo "UPSTOX_TOKEN length: ${#UPSTOX_TOKEN}"
-          echo "TG_BOT_TOKEN length: ${#TG_BOT_TOKEN}"
-          echo "TG_CHAT_ID length: ${#TG_CHAT_ID}"
-          if [ -z "$UPSTOX_TOKEN" ] || [ -z "$TG_BOT_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then
-            echo "One or more GitHub secrets are missing."
-            echo "Check Settings -> Environments -> production -> Environment secrets."
-            exit 1
-          fi
-          echo "ALL GITHUB SECRETS ARE AVAILABLE"
+      # ==========================================
+      # TEST GITHUB ENVIRONMENT SECRETS
+      # ==========================================
+      - name: Test GitHub Secrets
+        env:
+          UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          echo "UPSTOX_TOKEN length: ${#UPSTOX_TOKEN}"
+          echo "TG_BOT_TOKEN length: ${#TG_BOT_TOKEN}"
+          echo "TG_CHAT_ID length: ${#TG_CHAT_ID}"
+          if [ -z "$UPSTOX_TOKEN" ] || [ -z "$TG_BOT_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then
+            echo "One or more GitHub secrets are missing."
+            echo "Check Settings -> Environments -> production -> Environment secrets."
+            exit 1
+          fi
+          echo "ALL GITHUB SECRETS ARE AVAILABLE"
 
-      # ==========================================
-      # RESTORE JOURNAL + STATE (Actions cache, not git)
-      # ==========================================
-      # Every run saves under its own key; restore-keys picks the most recent
-      # "bot-state-" entry, so the afternoon half gets the morning's open
-      # position and tomorrow gets today's journal. First run after this
-      # change: no cache yet -> the files still in the checkout seed it.
-      # Caches expire after 7 idle days — a longer market holiday starts the
-      # journal fresh (the Telegram copies hold the history).
-      - name: Restore journal and state
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            option_dashboard.xlsx
-            positions.json
-            tuning.json
-          key: bot-state-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            bot-state-
+      # ==========================================
+      # RESTORE JOURNAL + STATE (Actions cache, not git)
+      # ==========================================
+      # Every run saves under its own key; restore-keys picks the most recent
+      # "bot-state-" entry, so the afternoon half gets the morning's open
+      # position and tomorrow gets today's journal. First run after this
+      # change: no cache yet -> the files still in the checkout seed it.
+      # Caches expire after 7 idle days — a longer market holiday starts the
+      # journal fresh (the Telegram copies hold the history).
+      - name: Restore journal and state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            option_dashboard.xlsx
+            positions.json
+            tuning.json
+          key: bot-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            bot-state-
 
-      # ==========================================
-      # RUN TRADING SESSION
-      # ==========================================
-      - name: Run trading session
-        env:
-          UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          AUTO_EXIT: "1"
-        run: |
-          if [ -z "$UPSTOX_TOKEN" ]; then
-            echo "UPSTOX_TOKEN is EMPTY"
-            exit 1
-          fi
-          echo "UPSTOX_TOKEN is present (length ${#UPSTOX_TOKEN})"
+      # ==========================================
+      # STREAM TEST (manual dispatch with stream_test = true)
+      # ==========================================
+      # Proves the V3 WebSocket feed from the runner (wss is blocked by the
+      # office proxy locally): connects, subscribes the underlying, prints
+      # ticks for 30 s, exit 0 if any arrived. Nothing else runs.
+      - name: Stream test
+        if: ${{ github.event.inputs.stream_test == 'true' }}
+        env:
+          UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
+        run: node stream-test.js
 
-          echo "=== REPOSITORY FILES ==="
-          find . -maxdepth 2 -type f -not -path "./node_modules/*" | sort
+      # ==========================================
+      # RUN TRADING SESSION
+      # ==========================================
+      - name: Run trading session
+        if: ${{ github.event.inputs.stream_test != 'true' }}
+        env:
+          UPSTOX_TOKEN: ${{ secrets.UPSTOX_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          AUTO_EXIT: "1"
+        run: |
+          if [ -z "$UPSTOX_TOKEN" ]; then
+            echo "UPSTOX_TOKEN is EMPTY"
+            exit 1
+          fi
+          echo "UPSTOX_TOKEN is present (length ${#UPSTOX_TOKEN})"
 
-          if [ ! -f "./option_dashboard.js" ]; then
-            echo "ERROR: option_dashboard.js not found in repository root"
-            exit 1
-          fi
+          echo "=== REPOSITORY FILES ==="
+          find . -maxdepth 2 -type f -not -path "./node_modules/*" | sort
 
-          CURRENT_IST=$(TZ=Asia/Kolkata date +%H:%M)
+          if [ ! -f "./option_dashboard.js" ]; then
+            echo "ERROR: option_dashboard.js not found in repository root"
+            exit 1
+          fi
 
-          # Past market close — a redundant/queued trigger with nothing
-          # left to do. Exit cleanly instead of burning runner minutes.
-          if [[ "$CURRENT_IST" > "15:29" ]]; then
-            echo "Market closed ($CURRENT_IST IST) — nothing to do"
-            exit 0
-          fi
+          CURRENT_IST=$(TZ=Asia/Kolkata date +%H:%M)
 
-          # Session halves by IST wall clock (not UTC hour), so a queued
-          # duplicate that starts at 12:36 correctly becomes the afternoon
-          # session instead of re-running the morning one.
-          if [[ "$CURRENT_IST" < "12:17" ]]; then
-            export SESSION_END="12:35"
-          else
-            export SESSION_END="15:35"
-          fi
-          echo "Session until $SESSION_END IST"
+          # Past market close — a redundant/queued trigger with nothing
+          # left to do. Exit cleanly instead of burning runner minutes.
+          if [[ "$CURRENT_IST" > "15:29" ]]; then
+            echo "Market closed ($CURRENT_IST IST) — nothing to do"
+            exit 0
+          fi
 
-          # Reliable 09:15 start: early triggers idle here until open.
-          while [[ "$(TZ=Asia/Kolkata date +%H:%M)" < "09:15" ]]; do
-            echo "Waiting for 09:15 IST open (now $(TZ=Asia/Kolkata date +%H:%M))..."
-            sleep 60
-          done
+          # Session halves by IST wall clock (not UTC hour), so a queued
+          # duplicate that starts at 12:36 correctly becomes the afternoon
+          # session instead of re-running the morning one.
+          if [[ "$CURRENT_IST" < "12:17" ]]; then
+            export SESSION_END="12:35"
+          else
+            export SESSION_END="15:35"
+          fi
+          echo "Session until $SESSION_END IST"
 
-          echo "=== STARTING TRADING ENGINE ==="
-          node ./option_dashboard.js session &
-          ENGINE=$!
-          echo "Engine PID: $ENGINE"
+          # Reliable 09:15 start: early triggers idle here until open.
+          while [[ "$(TZ=Asia/Kolkata date +%H:%M)" < "09:15" ]]; do
+            echo "Waiting for 09:15 IST open (now $(TZ=Asia/Kolkata date +%H:%M))..."
+            sleep 60
+          done
 
-          # Watchdog: stop the engine at the half's end. (The 10-minute
-          # state commits that used to live in this loop are gone — the
-          # cache save below persists the files once the run ends.)
-          while kill -0 "$ENGINE" 2>/dev/null; do
-            CURRENT_IST=$(TZ=Asia/Kolkata date +%H:%M)
-            if [[ "$CURRENT_IST" > "$SESSION_END" || "$CURRENT_IST" == "$SESSION_END" ]]; then
-              echo "Session end reached: $CURRENT_IST IST — stopping trading engine"
-              kill "$ENGINE" 2>/dev/null || true
-              break
-            fi
-            sleep 60
-          done
+          echo "=== STARTING TRADING ENGINE ==="
+          node ./option_dashboard.js session &
+          ENGINE=$!
+          echo "Engine PID: $ENGINE"
 
-          wait "$ENGINE" 2>/dev/null || true
-          echo "=== TRADING SESSION FINISHED ==="
+          # Watchdog: stop the engine at the half's end. (The 10-minute
+          # state commits that used to live in this loop are gone — the
+          # cache save below persists the files once the run ends.)
+          while kill -0 "$ENGINE" 2>/dev/null; do
+            CURRENT_IST=$(TZ=Asia/Kolkata date +%H:%M)
+            if [[ "$CURRENT_IST" > "$SESSION_END" || "$CURRENT_IST" == "$SESSION_END" ]]; then
+              echo "Session end reached: $CURRENT_IST IST — stopping trading engine"
+              kill "$ENGINE" 2>/dev/null || true
+              break
+            fi
+            sleep 60
+          done
 
-      # ==========================================
-      # SAVE JOURNAL + STATE (always, even after a kill/timeout)
-      # ==========================================
-      - name: Save journal and state
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            option_dashboard.xlsx
-            positions.json
-            tuning.json
-          key: bot-state-${{ github.run_id }}-${{ github.run_attempt }}
+          wait "$ENGINE" 2>/dev/null || true
+          echo "=== TRADING SESSION FINISHED ==="
 
-      # ==========================================
-      # SEND THE JOURNAL TO TELEGRAM (closing half only)
-      # ==========================================
-      - name: Send journal to Telegram
-        if: always()
-        env:
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: |
-          NOW_IST=$(TZ=Asia/Kolkata date +%H:%M)
-          if [[ "$NOW_IST" < "15:00" ]]; then
-            echo "Half-day run ($NOW_IST IST) — the journal goes out after the close"
-            exit 0
-          fi
-          if [ ! -f option_dashboard.xlsx ]; then
-            echo "No workbook to send"
-            exit 0
-          fi
-          TODAY=$(TZ=Asia/Kolkata date +%Y-%m-%d)
-          # Caption = today's trade count and net PnL from the Trades sheet;
-          # falls back to a plain caption if the workbook cannot be read.
-          cat > /tmp/caption.js <<'JS'
-          const XLSX = require("xlsx");
-          const [file, today, repo] = process.argv.slice(2);
-          const rows = XLSX.utils.sheet_to_json(XLSX.readFile(file).Sheets.Trades || {});
-          const t = rows.filter(r => String(r.Timestamp).startsWith(today));
-          const net = t.reduce((a, r) => a + (Number(r.PnL) || 0), 0);
-          const wins = t.filter(r => Number(r.PnL) > 0).length;
-          console.log(`${repo.split("/").pop()} ${today}: ${t.length} trade(s), ${wins} win(s), net Rs ${net.toFixed(0)}`);
-          JS
-          CAPTION=$(node /tmp/caption.js option_dashboard.xlsx "$TODAY" "$GITHUB_REPOSITORY" 2>/dev/null || echo "${GITHUB_REPOSITORY##*/} journal $TODAY")
-          echo "Caption: $CAPTION"
-          curl -sS --max-time 120 \
-            -F chat_id="$TG_CHAT_ID" \
-            -F caption="$CAPTION" \
-            -F document=@option_dashboard.xlsx \
-            "https://api.telegram.org/bot$TG_BOT_TOKEN/sendDocument" \
-            -o /dev/null -w "Telegram sendDocument HTTP %{http_code}\n" || echo "Telegram send failed (journal is still in the cache)"
+      # ==========================================
+      # SAVE JOURNAL + STATE (always, even after a kill/timeout)
+      # ==========================================
+      - name: Save journal and state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            option_dashboard.xlsx
+            positions.json
+            tuning.json
+          key: bot-state-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # ==========================================
+      # SEND THE JOURNAL TO TELEGRAM (closing half only)
+      # ==========================================
+      - name: Send journal to Telegram
+        if: ${{ always() && github.event.inputs.stream_test != 'true' }}
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          NOW_IST=$(TZ=Asia/Kolkata date +%H:%M)
+          if [[ "$NOW_IST" < "15:00" ]]; then
+            echo "Half-day run ($NOW_IST IST) — the journal goes out after the close"
+            exit 0
+          fi
+          if [ ! -f option_dashboard.xlsx ]; then
+            echo "No workbook to send"
+            exit 0
+          fi
+          TODAY=$(TZ=Asia/Kolkata date +%Y-%m-%d)
+          # Caption = today's trade count and net PnL from the Trades sheet;
+          # falls back to a plain caption if the workbook cannot be read.
+          cat > /tmp/caption.js <<'JS'
+          const XLSX = require("xlsx");
+          const [file, today, repo] = process.argv.slice(2);
+          const rows = XLSX.utils.sheet_to_json(XLSX.readFile(file).Sheets.Trades || {});
+          const t = rows.filter(r => String(r.Timestamp).startsWith(today));
+          const net = t.reduce((a, r) => a + (Number(r.PnL) || 0), 0);
+          const wins = t.filter(r => Number(r.PnL) > 0).length;
+          console.log(${repo.split("/").pop()} ${today}: ${t.length} trade(s), ${wins} win(s), net Rs ${net.toFixed(0)});
+          JS
+          CAPTION=$(node /tmp/caption.js option_dashboard.xlsx "$TODAY" "$GITHUB_REPOSITORY" 2>/dev/null || echo "${GITHUB_REPOSITORY##*/} journal $TODAY")
+          echo "Caption: $CAPTION"
+          curl -sS --max-time 120 \
+            -F chat_id="$TG_CHAT_ID" \
+            -F caption="$CAPTION" \
+            -F document=@option_dashboard.xlsx \
+            "https://api.telegram.org/bot$TG_BOT_TOKEN/sendDocument" \
+            -o /dev/null -w "Telegram sendDocument HTTP %{http_code}\n" || echo "Telegram send failed (journal is still in the cache)"
