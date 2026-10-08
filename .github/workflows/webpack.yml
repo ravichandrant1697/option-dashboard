@@ -189,6 +189,38 @@ jobs:
           key: bot-state-${{ github.run_id }}-${{ github.run_attempt }}
 
       # ==========================================
+      # SEND THE TICK JOURNAL TO TELEGRAM (every run, both halves)
+      # ==========================================
+      # ticks-<date>-<HHMM>.csv + events-<date>-<HHMM>.csv written by
+      # ticklog.js during this run (NIFTY tick-by-tick backtest data).
+      # Telegram's document limit is 50 MB -> gzip anything above 45 MB.
+      - name: Send tick journal to Telegram
+        if: ${{ always() && github.event.inputs.stream_test != 'true' }}
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          shopt -s nullglob
+          FILES=(ticks-*.csv events-*.csv)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No tick journal files this run"
+            exit 0
+          fi
+          for f in "${FILES[@]}"; do
+            SIZE=$(stat -c %s "$f")
+            LINES=$(wc -l < "$f")
+            SEND="$f"
+            if [ "$SIZE" -gt 47185920 ]; then gzip -k "$f" && SEND="$f.gz"; fi
+            echo "Sending $SEND ($SIZE bytes, $LINES lines)"
+            curl -sS --max-time 300 \
+              -F chat_id="$TG_CHAT_ID" \
+              -F caption="${GITHUB_REPOSITORY##*/} $f - $((LINES - 1)) rows" \
+              -F document=@"$SEND" \
+              "https://api.telegram.org/bot$TG_BOT_TOKEN/sendDocument" \
+              -o /dev/null -w "Telegram sendDocument HTTP %{http_code}\n" || echo "Telegram send failed for $f"
+          done
+
+      # ==========================================
       # SEND THE JOURNAL TO TELEGRAM (closing half only)
       # ==========================================
       - name: Send journal to Telegram
