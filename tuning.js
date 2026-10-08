@@ -22,6 +22,10 @@ const tuning = {
   requireTrendMatch: false  // gate entries on candle-trend agreement
 };
 
+// The config default, captured before loadTuning can overwrite it — the
+// < 10-trades reset below restores it.
+const DEFAULT_MIN_CONFIDENCE = RULES.minConfidence;
+
 // One-time startup load of tuning.json; applies the stored confidence
 // threshold immediately.
 function loadTuning() {
@@ -70,6 +74,14 @@ function runTuning() {
 
   if (trades.length < 10) {
     console.log(`🔧 TUNE: only ${trades.length} completed trade(s) — need 10+, keeping defaults`);
+    // 2026-09-11: "keeping defaults" must MEAN defaults. When the regime
+    // start moves and leaves < 10 trades, the previous regime's tuning used
+    // to survive in tuning.json — the SBIN file kept minConfidence 90 from
+    // 13 spread-era trades and silently blocked every conf-83 naked read.
+    tuning.minConfidence = null;
+    tuning.blockedStrategies = [];
+    tuning.requireTrendMatch = false;
+    RULES.minConfidence = DEFAULT_MIN_CONFIDENCE;
     fs.writeFileSync(TUNING_FILE, JSON.stringify(tuning, null, 2));
     return;
   }

@@ -38,6 +38,12 @@ let WebSocketImpl = null;
 let protobuf = null;
 try { WebSocketImpl = require("ws"); } catch { /* npm install ws */ }
 try { protobuf = require("protobufjs"); } catch { /* npm install protobufjs */ }
+// Tick journal (2026-10-07) — optional module; absent = no journal.
+let ticklog = null;
+try { ticklog = require("./ticklog"); } catch { /* journal off */ }
+// Stream-fed market data (2026-10-07) — optional module; absent = ticks feed exits/entries only.
+let streamfeed = null;
+try { streamfeed = require("./streamfeed"); } catch { /* REST analysis */ }
 
 const PROTO_FILE = path.join(__dirname, "MarketDataFeedV3.proto");
 const ENABLED = process.env.STREAM !== "0";
@@ -60,8 +66,12 @@ let ticksSeen = 0;
 const wanted = new Set();     // every key we want streamed (re-sent on reconnect)
 const subscribed = new Set(); // keys the server currently has
 const planKeys = new Set();   // ATM legs of the latest plan (rotated per poll)
+const journalKeys = new Set(); // ATM ± N strikes streamed for the tick journal only (rotated per poll)
 
-function log(msg) { console.log(`🔌 stream: ${msg}`); }
+function log(msg) {
+  console.log(`🔌 stream: ${msg}`);
+  if (ticklog) ticklog.logEvent("stream", { msg });
+}
 
 async function loadProto() {
   if (FeedResponse) return;
@@ -101,7 +111,7 @@ function subscribe(keys) {
 }
 
 function unsubscribe(keys) {
-  const ks = (keys || []).filter(k => k && wanted.has(k) && !planKeys.has(k) && !positionKeys().has(k));
+  const ks = (keys || []).filter(k => k && wanted.has(k) && !planKeys.has(k) && !journalKeys.has(k) && !positionKeys().has(k));
   ks.forEach(k => wanted.delete(k));
   const live = ks.filter(k => subscribed.has(k));
   if (live.length && sendFrame("unsub", live)) live.forEach(k => subscribed.delete(k));
@@ -124,6 +134,18 @@ function syncPlanKeys(keys) {
   subscribe([...next]);
 }
 
+// Tick journal (2026-10-07): the ATM ± N strikes (CE + PE) stream purely
+// so the replay has prices for the strikes the bot could have chosen —
+// rotated each poll like the plan keys, dropped when they leave the window
+// (unless a position or the plan still needs them).
+function syncJournalKeys(keys) {
+  const next = new Set((keys || []).filter(Boolean));
+  const gone = [...journalKeys].filter(k => !next.has(k));
+  journalKeys.clear(); next.forEach(k => journalKeys.add(k));
+  unsubscribe(gone);
+  subscribe([...next]);
+}
+
 function extract(feed) {
   const ff = feed.fullFeed || {};
   const mff = ff.marketFF || null;
@@ -133,11 +155,19 @@ function extract(feed) {
   return {
     ltp: ltpc?.ltp ?? null,
     cp: ltpc?.cp ?? null,
+    ltq: ltpc?.ltq ?? null,          // last traded quantity
+    ltt: ltpc?.ltt ?? null,          // last trade time (exchange, epoch ms)
     bid: q?.bidP ?? null,
+    bidQ: q?.bidQ ?? null,
     ask: q?.askP ?? null,
+    askQ: q?.askQ ?? null,
     greeks,
     oi: mff?.oi ?? feed.firstLevelWithGreeks?.oi ?? null,
-    iv: mff?.iv ?? feed.firstLevelWithGreeks?.iv ?? null
+    iv: mff?.iv ?? feed.firstLevelWithGreeks?.iv ?? null,
+    vtt: mff?.vtt ?? null,           // volume traded today
+    atp: mff?.atp ?? null,           // average traded price
+    tbq: mff?.tbq ?? null,           // total buy quantity (book)
+    tsq: mff?.tsq ?? null            // total sell quantity (book)
   };
 }
 
@@ -152,13 +182,26 @@ function onMessage(raw) {
     const t = extract(feed);
     if (t.ltp == null) continue;
     runtime.liveTicks.set(key, { ...t, at: Date.now() });
+    if (streamfeed) streamfeed.applyTick(key, t);
+    if (ticklog) ticklog.logTick(key, t);
     n++;
   }
   if (!n) return;
   lastTickAt = Date.now();
   if ((ticksSeen += n) <= n) log(`first ticks received (${n} key(s))`);
   streamExitSweep();
+  streamAnalysisSweep();
   streamEntrySweep();
+}
+
+// Stream-fed analysis (2026-10-07): refresh the bias between grid cycles
+// (engine.streamAnalyze throttles itself). Same require.cache rule as the
+// entry sweep — never loads the engine from here.
+function streamAnalysisSweep() {
+  let engine = null;
+  try { engine = require.cache[require.resolve("./engine")]?.exports || null; } catch { /* no engine in this process */ }
+  if (!engine || typeof engine.streamAnalyze !== "function") return;
+  engine.streamAnalyze().catch(e => log(`stream analysis failed: ${e.message}`));
 }
 
 // Tick entries (2026-10-07): hand the latest spot tick to engine.tickEntryCheck,
@@ -273,4 +316,4 @@ function status() {
   };
 }
 
-module.exports = { connectStream, streamExitSweep, subscribe, unsubscribe, syncPlanKeys, hasFreshTicks, netFromTicks, status, isConnected: () => connected };
+module.exports = { connectStream, streamExitSweep, subscribe, unsubscribe, syncPlanKeys, syncJournalKeys, hasFreshTicks, netFromTicks, status, isConnected: () => connected };

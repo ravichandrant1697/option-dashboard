@@ -186,6 +186,14 @@ const RULES = {
   freshBreakOnly: true,
   freshBreakMaxRun: 3,
   freshBreakMaxMovePct: 0.0015,
+  // Minimum break depth (2026-10-07): the fresh break must clear the prior
+  // day extreme by this fraction of spot (0.0003 = 0.03 % ≈ SBIN 0.3 /
+  // NIFTY 7 / SENSEX 22 pts). Replay 09-11→10-07 (analysis-scripts/
+  // minbreak.js): all 7 stops under the live rule were breaks < 0.03 %
+  // (16 trades −₹3,970); breaks ≥ 0.03 % were 10/10 wins +₹11.9k; sequential
+  // net +₹7.9k/26 → +₹10.4k/12, 83 % win. 10-07 losses: SENSEX 10 pts
+  // (0.013 %), SBIN 0.15 pts (0.016 %) — both one-tick wicks. 0 = off.
+  freshBreakMinPct: 0.0003,
   // Tick entries (2026-10-07, user: "no wait"): between the 3-min chain
   // polls, every streamed spot tick re-runs the trade plan (same gates,
   // same bias/chain as the last poll, spot = the tick) and opens the
@@ -195,6 +203,31 @@ const RULES = {
   // tickEntryMinGapMs throttles the re-plan; false = poll entries only.
   tickEntry: true,
   tickEntryMinGapMs: 2000,
+  // Tick journal (2026-10-07, user: backtest the tick-by-tick process):
+  // every streamed tick → ticks-<date>-<HHMM>.csv, every decision →
+  // events-<date>-<HHMM>.csv (ticklog.js); both go to Telegram at the end
+  // of each run. tickJournalStrikes = how many strikes either side of ATM
+  // (CE + PE) are streamed purely for the journal, so a replay has option
+  // prices for the strikes the bot could have chosen, not only the ones it
+  // did. 2 → ATM ± 2 = 10 option keys + index + futures + plan/position legs.
+  tickJournal: true,
+  tickJournalStrikes: 2,
+  // Stream-fed analysis (2026-10-07, user: chain / candles / futures via the
+  // WebSocket): the analysis window (ATM ± strikeRange, CE + PE) plus index
+  // and futures are streamed; every tick updates a live copy of the last
+  // REST chain (ltp, oi, iv, greeks, volume), 5-min candles are built from
+  // index/futures ticks (volume = vtt deltas), and the futures build-up
+  // reads the futures tick. The 3-min cycle then analyses the LIVE chain
+  // (no REST) whenever the index tick is fresh, and between cycles the
+  // bias is re-computed every streamAnalysisMs so tick entries see it the
+  // moment the exchange publishes new OI. REST stays as the seed (one chain
+  // call at startup and every streamReseedMs for prev_oi / close_price /
+  // new strikes) and as the fallback whenever ticks go stale. The Dashboard
+  // row and the day-extreme bookkeeping stay on the 3-min grid. false or
+  // STREAM_ANALYSIS=0 = the REST path exactly as before.
+  streamAnalysis: true,
+  streamAnalysisMs: 5000,
+  streamReseedMs: 30 * 60000,
   // Scalp time stop (2026-09-11): a scalp/naked position that has armed NO
   // profit-lock rung within this many minutes exits TIME_STOP — Range drift
   // is not a SIGNAL_CHANGE and intraday has no maxHoldDays, so the 10 Sep

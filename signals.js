@@ -12,6 +12,10 @@ const { istTimestamp, todayIST } = require("./clock");
 const { fetchCandles, fetchDailyCandles } = require("./upstox-api");
 const { getActiveHorizon } = require("./horizons");
 const runtime = require("./runtime");
+// Stream-fed market data (2026-10-07) — optional module; absent = REST only.
+let streamfeed = null;
+try { streamfeed = require("./streamfeed"); } catch { /* REST path */ }
+const streamCandlesOn = () => !!streamfeed && CONFIG && require("./config").RULES.streamAnalysis && process.env.STREAM_ANALYSIS !== "0";
 
 /* ═══════════════════════════════════════════════════════════════════════
  * BUILD-UP CLASSIFICATION  (FIX 1)
@@ -98,7 +102,27 @@ function sma(closes, period) {
 //                (two, because the newest candle is usually still forming
 //                and would understate) — the volume-surge entry gate
 async function refreshIntradayTrend() {
-  const candles = await fetchCandles(CONFIG.instrumentKey, "minutes", 5);
+  // Candle source (2026-10-07): tick-built 5-min candles from the stream
+  // once six index buckets exist — seeded ONCE with the REST candles so
+  // VWAP and the volume average cover the whole day — else the REST fetch
+  // exactly as before. Same math either way (applyIntradayTrend).
+  let candles, volCandles = null, vwapRef = null, source = "rest";
+  if (streamCandlesOn() && streamfeed.candlesReady()) {
+    if (streamfeed.historyNeeded(CONFIG.instrumentKey)) {
+      try { streamfeed.seedCandles(CONFIG.instrumentKey, await fetchCandles(CONFIG.instrumentKey, "minutes", 5)); } catch (e) { console.error("Index candle history seed failed:", e.response?.status || e.message); }
+    }
+    candles = streamfeed.candles(CONFIG.instrumentKey);
+    if (!candles.some(c => c.volume > 0) && CONFIG.futuresKey) {
+      if (streamfeed.historyNeeded(CONFIG.futuresKey)) {
+        try { streamfeed.seedCandles(CONFIG.futuresKey, await fetchCandles(CONFIG.futuresKey, "minutes", 5)); } catch (e) { console.error("Futures candle history seed failed:", e.response?.status || e.message); }
+      }
+      volCandles = streamfeed.candles(CONFIG.futuresKey);
+      vwapRef = volCandles.length ? volCandles[volCandles.length - 1].close : null;
+    }
+    source = "stream";
+  } else {
+    candles = await fetchCandles(CONFIG.instrumentKey, "minutes", 5);
+  }
   if (candles.length < 6) {
     // fewer than six 5-min candles — e.g. the first ~30 min of the session
     runtime.setCandleTrend(null);
@@ -107,12 +131,6 @@ async function refreshIntradayTrend() {
     runtime.setVolumeSurge(null);
     return;
   }
-  const recent = candles.slice(-6);
-  const first = recent[0].close;
-  const last = recent[recent.length - 1].close;
-  const pct = first ? ((last - first) / first) * 100 : 0;
-  const trend = pct > 0.1 ? "Up" : pct < -0.1 ? "Down" : "Flat";
-  runtime.setCandleTrend(trend);
 
   // Volume source: INDEX instruments trade no volume (their candles carry
   // 0), so VWAP/volume fall back to the near-month FUTURES candles when
@@ -121,17 +139,30 @@ async function refreshIntradayTrend() {
   // spot, so a futures-sourced VWAP is compared against the FUTURES price
   // (the same candles' last close), never against index spot. vwapRef
   // null = VWAP is in underlying space, compare live spot as usual.
-  let volCandles = candles;
-  let vwapRef = null;
-  if (!candles.some(c => c.volume > 0) && CONFIG.futuresKey) {
-    try {
-      volCandles = await fetchCandles(CONFIG.futuresKey, "minutes", 5);
-      vwapRef = volCandles.length ? volCandles[volCandles.length - 1].close : null;
-    } catch (e) {
-      volCandles = [];
-      console.error("Futures candles failed — VWAP/volume gates inactive:", e.response?.status || e.message);
+  if (volCandles == null) {
+    volCandles = candles;
+    if (!candles.some(c => c.volume > 0) && CONFIG.futuresKey) {
+      try {
+        volCandles = await fetchCandles(CONFIG.futuresKey, "minutes", 5);
+        vwapRef = volCandles.length ? volCandles[volCandles.length - 1].close : null;
+      } catch (e) {
+        volCandles = [];
+        console.error("Futures candles failed — VWAP/volume gates inactive:", e.response?.status || e.message);
+      }
     }
   }
+  applyIntradayTrend(candles, volCandles, vwapRef, source);
+}
+
+// The intraday-trend math, shared by the REST and the stream candle paths:
+// trend from the last six closes, VWAP and volume surge from volCandles.
+function applyIntradayTrend(candles, volCandles, vwapRef, source = "rest") {
+  const recent = candles.slice(-6);
+  const first = recent[0].close;
+  const last = recent[recent.length - 1].close;
+  const pct = first ? ((last - first) / first) * 100 : 0;
+  const trend = pct > 0.1 ? "Up" : pct < -0.1 ? "Down" : "Flat";
+  runtime.setCandleTrend(trend);
 
   let pv = 0, vol = 0;
   for (const c of volCandles) {
@@ -154,8 +185,10 @@ async function refreshIntradayTrend() {
 
   console.log(
     `🕯️ CANDLE TREND (30m): ${trend} (${pct.toFixed(2)}%) | VWAP ${vwap ?? "n/a"}` +
-      `${vwapRef != null ? ` (futures, ref ${vwapRef})` : ""} | vol surge ${surge ?? "n/a"}×`
+      `${vwapRef != null ? ` (futures, ref ${vwapRef})` : ""} | vol surge ${surge ?? "n/a"}×` +
+      `${source === "stream" ? ` | ${candles.length} tick-built candles` : ""}`
   );
+  return { trend, pct, vwap, vwapRef, surge };
 }
 
 // Daily SMA-crossover trend for positional/swing (playbook MA rule).
@@ -210,7 +243,10 @@ async function refreshCandleTrend() {
 // only happens on the horizon's cadence (5 min intraday, hourly daily-MA).
 async function maybeRefreshCandleTrend() {
   const refreshMs = getActiveHorizon().trendRefreshMs || CONFIG.candleRefreshMs;
-  if (Date.now() - lastCandleRefresh < refreshMs) return;
+  // Tick-built candles cost nothing to re-read → refresh every cycle once
+  // they are ready (intraday only); the REST path keeps its 5-min cadence.
+  const streamReady = streamCandlesOn() && getActiveHorizon().trend.source !== "daily-ma" && streamfeed.candlesReady();
+  if (!streamReady && Date.now() - lastCandleRefresh < refreshMs) return;
   console.log("Refreshing candle trend...");
   await refreshCandleTrend();
   console.log("Candle trend refreshed.");
@@ -672,6 +708,7 @@ module.exports = {
   getATMStrike,
   refreshCandleTrend,
   maybeRefreshCandleTrend,
+  applyIntradayTrend,
   updateFuturesBuildup,
   analyze
 };

@@ -20,6 +20,14 @@ const { tuning, runTuning } = require("./tuning");
 const { getActiveHorizon } = require("./horizons");
 const { CONFIG, RULES } = require("./config");
 const runtime = require("./runtime");
+// Tick journal (2026-10-07) — optional; absent module = no events written.
+let ticklog = null;
+try { ticklog = require("./ticklog"); } catch { /* journal off */ }
+const logEvent = (type, detail) => { if (ticklog) ticklog.logEvent(type, detail); };
+// Stream-fed market data (2026-10-07) — optional; absent module = REST only.
+let streamfeed = null;
+try { streamfeed = require("./streamfeed"); } catch { /* REST path */ }
+const streamAnalysisOn = () => !!streamfeed && RULES.streamAnalysis && process.env.STREAM_ANALYSIS !== "0";
 
 async function run() {
   console.log("\n==================================================");
@@ -52,32 +60,47 @@ async function run() {
     // ====================================================
 
     let chain, marketPcr;
+    let dataSource = "rest";
 
-    try {
-      console.log("Calling fetchMarketData()...");
+    // Stream-fed chain (2026-10-07): when the socket's index tick is fresh
+    // and the REST seed is young enough, the live copy of the chain —
+    // updated tick by tick — is the data; REST is called only to (re)seed
+    // (startup, every RULES.streamReseedMs) or when the stream is stale.
+    if (streamAnalysisOn() && streamfeed.chainFresh() && !streamfeed.needsReseed()) {
+      chain = streamfeed.liveChain();
+      marketPcr = null;
+      dataSource = "stream";
+      const st = streamfeed.status();
+      console.log(`Live chain from the stream: ${chain.length} strikes, ${st.updatedKeys} keys tick-updated, index tick ${st.indexAgeS}s old, seed ${Math.round(st.seedAgeS / 60)} min old`);
+    } else {
+      try {
+        console.log(streamAnalysisOn() ? `Calling fetchMarketData() (${streamfeed.needsReseed() ? "stream seed/reseed" : "stream stale — REST fallback"})...` : "Calling fetchMarketData()...");
 
-      ({ chain, marketPcr } = await fetchMarketData());
+        ({ chain, marketPcr } = await fetchMarketData());
 
-      console.log("fetchMarketData() SUCCESS");
-      console.log("Market PCR:", marketPcr);
-      console.log("Chain Length:", chain?.length || 0);
+        console.log("fetchMarketData() SUCCESS");
+        console.log("Market PCR:", marketPcr);
+        console.log("Chain Length:", chain?.length || 0);
 
-      if (chain?.length) {
-        console.log("Sample Strike:", chain[0].strike_price);
+        if (chain?.length) {
+          console.log("Sample Strike:", chain[0].strike_price);
+        }
+
+        if (streamAnalysisOn() && chain?.length) streamfeed.seedChain(chain);
+
+      } catch (e) {
+
+        console.error("fetchMarketData FAILED");
+
+        if (e.response) {
+          console.error("Status:", e.response.status);
+          console.error("Response:", JSON.stringify(e.response.data, null, 2));
+        } else {
+          console.error("Error:", e.message);
+        }
+
+        return;
       }
-
-    } catch (e) {
-
-      console.error("fetchMarketData FAILED");
-
-      if (e.response) {
-        console.error("Status:", e.response.status);
-        console.error("Response:", JSON.stringify(e.response.data, null, 2));
-      } else {
-        console.error("Error:", e.message);
-      }
-
-      return;
     }
 
     
@@ -99,12 +122,22 @@ async function run() {
     // ====================================================
 
     if (CONFIG.futuresKey) {
-      try {
-        const quotes = await fetchQuotes([CONFIG.futuresKey]);
-        updateFuturesBuildup(quotes.get(CONFIG.futuresKey));
-      } catch (e) {
-        // keep the previous read — a dropped quote must not fabricate one
-        console.error("Futures quote failed:", e.response?.status || e.message);
+      // Stream-fed: the futures tick (ltp, oi) with the day open pinned by
+      // the last REST quote — no call. REST cycles still quote once so the
+      // day open is the exchange's, not the first tick the socket saw.
+      const streamQuote = dataSource === "stream" ? streamfeed.futuresQuote() : null;
+      if (streamQuote) {
+        updateFuturesBuildup(streamQuote);
+      } else {
+        try {
+          const quotes = await fetchQuotes([CONFIG.futuresKey]);
+          const q = quotes.get(CONFIG.futuresKey);
+          if (streamAnalysisOn()) streamfeed.seedFuturesOpen(q);
+          updateFuturesBuildup(q);
+        } catch (e) {
+          // keep the previous read — a dropped quote must not fabricate one
+          console.error("Futures quote failed:", e.response?.status || e.message);
+        }
       }
     }
 
@@ -146,6 +179,27 @@ async function run() {
     // this plan has live ticks from its first second; open positions' legs
     // are subscribed by trade.openPosition and never dropped here.
     stream.syncPlanKeys((plan?.legs || []).map(l => l.instrument_key));
+
+    // Streamed strike window: with the stream-fed analysis on, the whole
+    // analysis window (ATM ± strikeRange, CE + PE) streams so the live
+    // chain stays current; otherwise just ATM ± tickJournalStrikes for the
+    // tick journal (so a replay has the strikes the bot could have chosen).
+    if (Number.isFinite(result.atmStrike) && (streamAnalysisOn() || RULES.tickJournal !== false)) {
+      const span = streamAnalysisOn() ? CONFIG.strikeRange : (RULES.tickJournalStrikes ?? 2) * CONFIG.strikeDiff;
+      const keys = chain
+        .filter(r => Math.abs(r.strike_price - result.atmStrike) <= span)
+        .flatMap(r => [r.call_options?.instrument_key, r.put_options?.instrument_key])
+        .filter(Boolean);
+      stream.syncJournalKeys(keys);
+    }
+    logEvent("poll", {
+      source: dataSource,
+      spot: result.spot, bias: result.bias, confidence: result.confidence, atm: result.atmStrike,
+      trend: runtime.getCandleTrend(), vwap: runtime.getVwap(), vwapRef: runtime.getVwapRef(), volSurge: runtime.getVolumeSurge(),
+      futures: runtime.getFuturesBuildup()?.label ?? null,
+      plan: plan ? { strategy: plan.rec?.strategy, legs: (plan.legs || []).map(l => `${l.side} ${l.strike}${l.type}`).join(" | "), netEntry: plan.netEntry, lots: plan.lots, blocked: plan.blocked ?? null } : null,
+      open: getState().open.length
+    });
 
     // AFTER the plan: the day-extreme retest gate must compare this poll's
     // spot against the PREVIOUS polls' low/high, never against itself.
@@ -375,7 +429,11 @@ async function tickEntryCheck() {
   const plan = await buildTradePlan(res, chain);
   const block = !plan ? "no plan" : plan.blocked ? plan.blocked : plan.lots < 1 ? "lots < 1" : null;
   if (block) {
-    if (block !== lastTickBlock) { console.log(`⚡ tick entry (spot ${tick.ltp}): ${block}`); lastTickBlock = block; }
+    if (block !== lastTickBlock) {
+      console.log(`⚡ tick entry (spot ${tick.ltp}): ${block}`);
+      logEvent("tick_gate", { spot: tick.ltp, bias: result.bias, block });
+      lastTickBlock = block;
+    }
     return;
   }
   lastTickBlock = null;
@@ -389,6 +447,7 @@ async function tickEntryCheck() {
   runtime.setEntryInFlight(true);
   try {
     console.log(`⚡ TICK ENTRY — spot ${tick.ltp} passed every gate between polls (bias ${result.bias} from the ${result.timestamp} poll)`);
+    logEvent("tick_entry", { spot: tick.ltp, bias: result.bias, poll: result.timestamp, legs: plan.legs.map(l => `${l.side} ${l.strike}${l.type}`).join(" | "), netEntry: plan.netEntry, tickPriced: stream.hasFreshTicks(plan.legs) });
     await openPosition(res, plan);
     saveState();
   } finally {
@@ -396,4 +455,48 @@ async function tickEntryCheck() {
   }
 }
 
-module.exports = { run, fastExitCheck, tickEntryCheck };
+// STREAM ANALYSIS — between grid cycles (2026-10-07). Re-runs analyze() on
+// the live chain every RULES.streamAnalysisMs so the bias/confidence the
+// tick entries read is as fresh as the exchange's latest OI publication,
+// instead of up to 3 minutes old. Only lastResult/lastChain change here:
+// the Dashboard row, the bias streak and the day-extreme bookkeeping stay
+// on the 3-min grid (their semantics assume 3-min polls). analyze() is
+// chatty, so its console output is muted for these runs; a bias change
+// is logged once (and journaled) when it happens.
+let lastStreamAnalysisAt = 0;
+let lastStreamBias = null;
+async function streamAnalyze() {
+  if (!streamAnalysisOn()) return;
+  const now = Date.now();
+  if (now - lastStreamAnalysisAt < (RULES.streamAnalysisMs || 5000)) return;
+  if (!isMarketOpen() && !process.env.FORCE_RUN) return;
+  if (!streamfeed.chainFresh()) return;
+  const prev = runtime.getLastResult();
+  if (!prev) return; // the first grid cycle seeds everything
+  lastStreamAnalysisAt = now;
+  const chain = streamfeed.liveChain();
+  const origLog = console.log;
+  let result;
+  console.log = () => {};
+  try { result = analyze(chain, null); } finally { console.log = origLog; }
+  if (!result) return;
+  runtime.setLastResult(result);
+  runtime.setLastChain(chain);
+  if (lastStreamBias == null) lastStreamBias = prev.bias;
+  if (result.bias !== lastStreamBias) {
+    console.log(`⚡ stream analysis: bias ${lastStreamBias} → ${result.bias} (conf ${result.confidence}) at spot ${result.spot}${lastGridAt ? ` — ${Math.round((now - lastGridAt) / 1000)}s after the last grid cycle` : ""}`);
+    logEvent("stream_bias", { from: lastStreamBias, to: result.bias, confidence: result.confidence, spot: result.spot, atm: result.atmStrike });
+    lastStreamBias = result.bias;
+  }
+}
+let lastGridAt = 0;
+const _run = run;
+// Wrap run() so the stream analysis knows when the last grid cycle was and
+// keeps its bias trail in step with the grid's.
+async function runWrapped() {
+  await _run();
+  lastGridAt = Date.now();
+  lastStreamBias = runtime.getLastResult()?.bias ?? lastStreamBias;
+}
+
+module.exports = { run: runWrapped, fastExitCheck, tickEntryCheck, streamAnalyze };

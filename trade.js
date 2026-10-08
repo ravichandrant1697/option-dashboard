@@ -58,6 +58,11 @@ function freshBreakBlock(bias, spot, st, rules = RULES) {
   const level = dir < 0 ? ext?.low : ext?.high;
   const fresh = level != null && (dir < 0 ? spot <= level : spot >= level);
   if (!fresh) return `bias ${bias} inside the day range (spot ${spot}, day ${dir < 0 ? "low" : "high"} ${level ?? "n/a"}) — not a fresh break`;
+  // 2026-10-07: a break of a few ticks is a wick, not a break — every stop
+  // under this gate (7/7 since 09-11) cleared the level by < 0.03 %.
+  const depthPct = (dir < 0 ? level - spot : spot - level) / spot;
+  if (rules.freshBreakMinPct && depthPct < rules.freshBreakMinPct)
+    return `break too shallow: spot ${spot} is ${(depthPct * 100).toFixed(3)}% beyond day ${dir < 0 ? "low" : "high"} ${level} < ${(rules.freshBreakMinPct * 100).toFixed(2)}% required`;
   const prevRun = st.extremeRun && st.extremeRun.dir === dir ? st.extremeRun.count : 0;
   const run = prevRun + 1;
   if (rules.freshBreakMaxRun && run > rules.freshBreakMaxRun)
@@ -555,6 +560,8 @@ async function openPosition(result, plan) {
   // Stream the legs for tick-level exits (lazy require: stream ↔ trade
   // would otherwise be a load-order cycle). Stream down → no-op.
   try { require("./stream").subscribe(pos.legs.map(l => l.instrument_key)); } catch { /* stream optional */ }
+  // Tick journal event (module optional).
+  try { require("./ticklog").logEvent("entry", { id: pos.id, legs: legsSummary(pos.legs), netEntry: pos.netEntry, stopDist: pos.stopDist, targetDist: pos.targetDist, lockDists: pos.lockDists, exitMode: pos.exitMode, spot: result.spot, bias: result.bias, confidence: pos.confidence }); } catch { /* journal off */ }
 
   // Telegram entry alert — labeled block (see alertHeader/levelLines).
   // Levels are NET-PREMIUM prices, same convention as the sheet.
@@ -619,6 +626,7 @@ async function closePosition(pos, netNow, outcome, reason) {
   state.open = state.open.filter(p => p.id !== pos.id);
   state.closedToday.push(trade);
   try { require("./stream").unsubscribe(pos.legs.map(l => l.instrument_key)); } catch { /* stream optional */ }
+  try { require("./ticklog").logEvent("exit", { id: pos.id, legs: legsSummary(pos.legs), reason, outcome, netEntry: pos.netEntry, netExit: netNow, pnl: trade.PnL, gross: trade.GrossPnL, charges: trade.Charges, lockLevel: pos._lockLevel ?? null }); } catch { /* journal off */ }
 
   // Update the entry's OPEN row in place; append only if it is missing.
   const openRow = SHEETS.Trades.find(r => r.PosId === pos.id);
