@@ -70,7 +70,10 @@ function windowKeys(atmStrike, span) {
 function applyTick(key, t) {
   const now = Date.now();
   if (key === CONFIG.instrumentKey) {
-    if (t.ltp != null) { spot = t.ltp; spotAt = now; pushCandle(key, t.ltp, null, now); }
+    // vtt: a STOCK underlying (SBIN, ETERNAL) trades its own volume and the
+    // volume-surge gate reads these candles — an index tick carries none,
+    // so NIFTY/SENSEX still fall back to the futures candles.
+    if (t.ltp != null) { spot = t.ltp; spotAt = now; pushCandle(key, t.ltp, t.vtt ?? null, now); }
     return;
   }
   if (CONFIG.futuresKey && key === CONFIG.futuresKey) {
@@ -145,7 +148,8 @@ function book(key) {
 }
 
 // vtt is the cumulative day volume → a bucket's volume = vtt at its last
-// tick − vtt at the previous bucket's last tick. Index ticks carry none.
+// tick − vtt at the previous bucket's last tick. Index ticks carry none;
+// stock and futures ticks do.
 function pushCandle(key, price, vtt, now) {
   const b = book(key);
   const start = Math.floor(now / BUCKET_MS) * BUCKET_MS;

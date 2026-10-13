@@ -7,3 +7,7 @@ trading.log
 option_dashboard.xlsx
 positions.json
 tuning.json
+ticks-*.csv
+ticks-*.csv.gz
+events-*.csv
+events-*.csv.gz

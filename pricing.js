@@ -11,6 +11,8 @@ const {
   SCALP_STOP_PCT,
   SCALP_LOCK_PCTS,
   SCALP_LOCK_POINTS,
+  SCALP_TRAIL_ARM_PCT,
+  SCALP_TRAIL_PCT,
   MAX_RISK,
   LOT_SIZE,
   MAX_LOTS,
@@ -148,9 +150,24 @@ function checkExit(pos, netNow, result) {
   // carry a single lockDist/_lockArmed — treated as a one-rung ladder.
   const rungs = pos.lockDists ?? (pos.lockDist != null ? [pos.lockDist] : null);
   if (rungs) {
-    if (pos._lockLevel == null && pos._lockArmed) pos._lockLevel = rungs[0];
-    for (const rung of rungs) {
-      if (move > rung && (pos._lockLevel == null || rung > pos._lockLevel)) pos._lockLevel = rung;
+    if (SCALP_TRAIL_PCT > 0) {
+      // Trailing floor (2026-10-12): the peak move is tracked on the position
+      // (_peakMove, persisted like _lockLevel). Once it has traded ABOVE
+      // SCALP_TRAIL_ARM_PCT of |entry| the floor = peak − SCALP_TRAIL_PCT of
+      // |entry|, ratcheting up only. Replaces the rung ladder once armed; a
+      // position that already carries a rung floor from before the switch
+      // keeps it as the minimum because the floor is never lowered.
+      const base = Math.abs(pos.netEntry);
+      if (pos._peakMove == null || move > pos._peakMove) pos._peakMove = move;
+      if (pos._peakMove > SCALP_TRAIL_ARM_PCT * base) {
+        const floor = Number((pos._peakMove - SCALP_TRAIL_PCT * base).toFixed(4));
+        if (pos._lockLevel == null || floor > pos._lockLevel) pos._lockLevel = floor;
+      }
+    } else {
+      if (pos._lockLevel == null && pos._lockArmed) pos._lockLevel = rungs[0];
+      for (const rung of rungs) {
+        if (move > rung && (pos._lockLevel == null || rung > pos._lockLevel)) pos._lockLevel = rung;
+      }
     }
     if (pos._lockLevel != null && move <= pos._lockLevel)
       return { outcome: netWin ? "WIN" : "LOSS", reason: "PROFIT_LOCK" };

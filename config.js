@@ -101,6 +101,20 @@ const SCALP_LOCK_PCTS = [0.08, 0.10, 0.125];
 // +10 — ₹650 gross on the lot — so a move that stalls short of the 8 %
 // rung still banks instead of round-tripping to the stop. 0 = off.
 const SCALP_LOCK_POINTS = 10;
+
+// Trailing profit floor (2026-10-12, user directive "trailing SL, 8 % manner"):
+// once the move has traded ABOVE SCALP_TRAIL_ARM_PCT of |net entry|, the
+// floor = peak move − SCALP_TRAIL_PCT of |net entry| and ratchets up with
+// every new peak; a pullback to/below the floor exits PROFIT_LOCK (ticks
+// still need the 5-s confirmation in stream.js). While on it REPLACES the
+// rung ladder above once armed (the rungs stay in the alert as reference
+// levels); before arming nothing changes — stop, target and the 45-min
+// TIME_STOP work as before. NIFTY tick replay 10-08..10-12 (trend days
+// only, analysis-scripts/tick-replay): +34 % / +42 % vs the ladder on the
+// two larger entry sets, −₹494 on the 3 live trades (a quick spike banks
+// less, a runner banks more). 0 = off → ladder exactly as before.
+const SCALP_TRAIL_ARM_PCT = 0.08;
+const SCALP_TRAIL_PCT = 0.05;
 const SCALP_LOCK_PCT = SCALP_LOCK_PCTS[0]; // first % rung — kept for older callers
 
 // Naked long options (Buy Call / Buy Put). History: 0 wins in 8 trades,
@@ -330,6 +344,8 @@ module.exports = {
   SCALP_LOCK_PCT,
   SCALP_LOCK_PCTS,
   SCALP_LOCK_POINTS,
+  SCALP_TRAIL_ARM_PCT,
+  SCALP_TRAIL_PCT,
   BLOCK_NAKED_LEGS,
   NAKED_ONLY,
   NAKED_MIN_SCORE,

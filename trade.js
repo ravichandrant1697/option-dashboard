@@ -12,7 +12,9 @@ const {
   BLOCK_NAKED_LEGS,
   NAKED_ONLY,
   NAKED_MIN_SCORE,
-  NAKED_MIN_CONFIDENCE
+  NAKED_MIN_CONFIDENCE,
+  SCALP_TRAIL_ARM_PCT,
+  SCALP_TRAIL_PCT
 } = require("./config");
 const { daysUntil, istTimestamp, nowIST } = require("./clock");
 const { getActiveHorizon } = require("./horizons");
@@ -105,8 +107,13 @@ function levelLines(pos) {
   const rungs = pos.lockDists ?? (pos.lockDist != null ? [pos.lockDist] : []);
   const lockLine = i =>
     `Profit Lock${i + 1} : ${rungs[i] != null ? (pos.netEntry + rungs[i]).toFixed(2) : "—"}`;
+  const trailLine =
+    SCALP_TRAIL_PCT > 0 && rungs.length
+      ? [`Trailing : arms above +${(SCALP_TRAIL_ARM_PCT * 100).toFixed(0)}% (${(pos.netEntry + SCALP_TRAIL_ARM_PCT * Math.abs(pos.netEntry)).toFixed(2)}), floor = peak − ${(SCALP_TRAIL_PCT * 100).toFixed(0)}% of entry`]
+      : [];
   return [
     ...Array.from({ length: Math.max(3, rungs.length) }, (_, i) => lockLine(i)),
+    ...trailLine,
     `Stop Loss : ${(pos.netEntry - pos.stopDist).toFixed(2)}`,
     `Target : ${pos.targetDist != null ? (pos.netEntry + pos.targetDist).toFixed(2) : "Signal reversal"}`
   ].join("\n");
@@ -117,7 +124,7 @@ function statusLabel(pos, reason) {
   if (reason === "PROFIT_LOCK") {
     const rungs = pos.lockDists ?? [];
     const idx = rungs.indexOf(pos._lockLevel);
-    return idx >= 0 ? `Profit Lock${idx + 1}` : "Profit Lock";
+    return idx >= 0 ? `Profit Lock${idx + 1}` : SCALP_TRAIL_PCT > 0 ? "Trailing Lock" : "Profit Lock";
   }
   return {
     TARGET: "Target",
