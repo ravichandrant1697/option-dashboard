@@ -16,12 +16,8 @@ on:
   # self-terminating, so extra firings cost nothing.
   # 08:55 / 09:15 / 09:35 IST morning (engine gated to 09:15), 12:17 / 12:45 IST afternoon relay.
   schedule:
-    - cron: "25 3 * * 1-5"
-    - cron: "45 3 * * 1-5"
-    - cron: "5 4 * * 1-5"
-    - cron: "47 6 * * 1-5"
-    - cron: "15 7 * * 1-5"
-
+    - cron: "40 3 * * 1-5"  # 09:10 AM IST
+    - cron: "40 6 * * 1-5"  # 12:10 PM IST
 # 2026-10-06: nothing is pushed back to the repository any more. The journal
 # (option_dashboard.xlsx) and the engine state (positions.json, tuning.json)
 # live in the Actions cache between runs and the journal goes out on
@@ -154,6 +150,11 @@ jobs:
             sleep 60
           done
 
+          # Marks a run that really traded - the closing journal send keys on
+          # it, so a queued trigger that wakes after 15:29 and exits above
+          # does not mail the same workbook again.
+          echo "ENGINE_RAN=1" >> "$GITHUB_ENV"
+
           echo "=== STARTING TRADING ENGINE ==="
           node ./option_dashboard.js session &
           ENGINE=$!
@@ -200,6 +201,14 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
+          # 2026-10-12: only a run that really started the engine has a tick
+          # journal worth sending. A queued trigger that wakes after the close
+          # (or any dispatch after hours) exits the run step before the engine
+          # and must send nothing - same ENGINE_RAN gate as the workbook step.
+          if [ "$ENGINE_RAN" != "1" ]; then
+            echo "No trading session ran this run - no tick journal to send"
+            exit 0
+          fi
           shopt -s nullglob
           FILES=(ticks-*.csv events-*.csv)
           if [ ${#FILES[@]} -eq 0 ]; then
@@ -230,6 +239,10 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
           NOW_IST=$(TZ=Asia/Kolkata date +%H:%M)
+          if [ "$ENGINE_RAN" != "1" ]; then
+            echo "No trading session ran this run ($NOW_IST IST) - journal already sent by the closing half"
+            exit 0
+          fi
           if [[ "$NOW_IST" < "15:00" ]]; then
             echo "Half-day run ($NOW_IST IST) - the journal goes out after the close"
             exit 0
